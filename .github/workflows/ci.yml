@@ -19,7 +19,7 @@ jobs:
         python-version: ["3.12", "3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install libmpv
         # pyode loads libmpv through ctypes. The tests use a fake player and
@@ -30,7 +30,7 @@ jobs:
           sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
 
@@ -49,10 +49,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10
 
       - name: Build the wheel
         run: uv build
@@ -64,7 +64,7 @@ jobs:
           /tmp/check/bin/pyode --version
           PYODE_STATIONS_FILE=/tmp/check/stations.csv /tmp/check/bin/pyode --list
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: dist
           path: dist/
