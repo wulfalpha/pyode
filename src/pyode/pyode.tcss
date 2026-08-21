@@ -1,0 +1,293 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* pyode -- the look of an illuminated receiver dial.
+ *
+ * Three colour roles, kept strictly apart:
+ *   paper  - content you read (station names, track titles)
+ *   dial   - tungsten amber: chrome, labels, selection. What you chose.
+ *   signal - cold cyan: live signal only. What is arriving down the wire.
+ * Nothing but the meter and the on-air lamp may use $signal.
+ */
+
+$cabinet: #14120F;
+$shelf: #1C1916;
+$paper: #EDE4D3;
+$dial: #E8A33D;
+$dial-dim: #8A6A3A;
+$signal: #5FD4D0;
+$quiet: #6B635A;
+
+Screen {
+    background: $cabinet;
+    color: $paper;
+    layout: vertical;
+}
+
+/* -- top bar ---------------------------------------------------------- */
+
+TopBar {
+    height: 1;
+    background: $cabinet;
+    color: $dial;
+    padding: 0 1;
+}
+
+TopBar #wordmark {
+    text-style: bold;
+    color: $dial;
+    width: 1fr;
+}
+
+TopBar #lamp {
+    width: auto;
+    color: $quiet;
+}
+
+TopBar #lamp.live {
+    color: $signal;
+    text-style: bold;
+}
+
+/* -- body ------------------------------------------------------------- */
+
+#body {
+    height: 1fr;
+}
+
+#stations {
+    width: 2fr;
+    min-width: 26;
+    padding: 1 1 1 2;
+}
+
+#stations-empty {
+    color: $quiet;
+    padding: 1 0;
+}
+
+#stations DataTable {
+    height: 1fr;
+    background: $cabinet;
+    color: $paper;
+    overflow-x: hidden;
+    scrollbar-size-horizontal: 0;
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $cabinet;
+    scrollbar-color: #2E2820;
+}
+
+#stations DataTable:focus {
+    background: $cabinet;
+    background-tint: 0%;
+}
+
+#stations DataTable > .datatable--header {
+    background: $cabinet;
+    color: $dial-dim;
+    text-style: none;
+}
+
+#stations DataTable > .datatable--cursor {
+    background: $dial;
+    color: $cabinet;
+    text-style: bold;
+}
+
+#stations DataTable > .datatable--hover {
+    background: $shelf;
+}
+
+DialRule {
+    width: 3;
+}
+
+DialRule > .dial--tick { color: #2E2820; }
+DialRule > .dial--major { color: $dial-dim; }
+DialRule > .dial--needle { color: $dial; text-style: bold; }
+
+#right {
+    width: 3fr;
+    min-width: 30;
+}
+
+/* Narrow and short terminals drop panes instead of overflowing.  The station
+   list and the controls are what the app cannot do without. */
+
+Screen.-narrow #dial,
+Screen.-narrow #right {
+    display: none;
+}
+
+Screen.-narrow #stations {
+    width: 1fr;
+    min-width: 0;
+}
+
+Screen.-short #signal-pane {
+    display: none;
+}
+
+/* -- now playing ------------------------------------------------------ */
+
+NowPlaying {
+    height: 1fr;
+    padding: 1 2;
+    overflow-y: auto;
+    /* Only appears when the pane is cramped, but Textual's default is bright
+       blue and would be the loudest thing on the screen. */
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $cabinet;
+    scrollbar-background-hover: $cabinet;
+    scrollbar-background-active: $cabinet;
+    scrollbar-color: #2E2820;
+    scrollbar-color-hover: $dial-dim;
+    scrollbar-color-active: $dial;
+}
+
+.eyebrow {
+    color: $dial-dim;
+    text-style: none;
+    height: 1;
+}
+
+NowPlaying #np-title {
+    color: $paper;
+    text-style: bold;
+    height: auto;
+    margin-bottom: 1;
+}
+
+NowPlaying #np-station {
+    color: $dial;
+    height: 1;
+}
+
+NowPlaying #np-detail {
+    color: $quiet;
+    height: 1;
+    margin-bottom: 1;
+}
+
+NowPlaying #np-tags {
+    color: $dial-dim;
+    height: auto;
+}
+
+NowPlaying #np-error {
+    color: #D8734A;
+    height: auto;
+    margin-top: 1;
+}
+
+/* -- signal meter ----------------------------------------------------- */
+
+#signal-pane {
+    height: 11;
+    padding: 1 2;
+    border-top: solid #2E2820;
+    background: $cabinet;
+}
+
+/* Blank cells in the chart fall through to the widget background, so it has
+   to be stated rather than inherited. */
+SignalMeter {
+    height: 1fr;
+    background: $cabinet;
+}
+
+SignalMeter > .signal--bar { color: $signal; }
+SignalMeter > .signal--peak { color: $paper; }
+SignalMeter > .signal--flat { color: #2E2820; }
+SignalMeter > .signal--off { color: $quiet; }
+
+/* -- controls --------------------------------------------------------- */
+
+ControlBar {
+    height: 2;
+    padding: 0 2;
+    border-top: solid #2E2820;
+    background: $cabinet;
+}
+
+ControlBar #transport {
+    width: 16;
+    color: $quiet;
+}
+
+ControlBar #transport.live { color: $signal; }
+ControlBar #transport.paused { color: $dial; }
+ControlBar #transport.error { color: #D8734A; }
+
+ControlBar #ctl-station {
+    width: 1fr;
+    color: $paper;
+    padding: 0 2;
+}
+
+ControlBar #ctl-volume {
+    width: 13;
+    text-align: right;
+    color: $dial;
+}
+
+ControlBar #ctl-keys {
+    width: auto;
+    color: $quiet;
+    padding: 0 0 0 3;
+}
+
+/* -- search ----------------------------------------------------------- */
+
+SearchScreen {
+    align: center middle;
+}
+
+#search-box {
+    width: 80%;
+    height: 80%;
+    background: $shelf;
+    border: solid $dial-dim;
+    padding: 1 2;
+}
+
+#search-box Input {
+    height: 1;
+    background: $cabinet;
+    color: $paper;
+    border: none;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#search-box Input:focus {
+    border: none;
+    color: $paper;
+}
+
+#search-box DataTable {
+    height: 1fr;
+    background: $shelf;
+    color: $paper;
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $shelf;
+    scrollbar-background-hover: $shelf;
+    scrollbar-background-active: $shelf;
+    scrollbar-color: #2E2820;
+    scrollbar-color-hover: $dial-dim;
+    scrollbar-color-active: $dial;
+}
+
+#search-box DataTable > .datatable--header {
+    background: $shelf;
+    color: $dial-dim;
+}
+
+#search-box DataTable > .datatable--cursor {
+    background: $dial;
+    color: $cabinet;
+    text-style: bold;
+}
+
+#search-status {
+    height: 1;
+    color: $quiet;
+}

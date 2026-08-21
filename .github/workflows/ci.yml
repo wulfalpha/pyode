@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libmpv
+        # pyode loads libmpv through ctypes. The tests use a fake player and
+        # pass without it, but installing it means CI exercises the same import
+        # path a user hits.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --python ${{ matrix.python-version }}
+
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Check formatting
+        run: uv run ruff format --check src tests
+
+      - name: Test
+        run: uv run pytest -q
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build the wheel
+        run: uv build
+
+      - name: Check it installs and runs on a clean interpreter
+        run: |
+          uv venv --python 3.12 /tmp/check
+          uv pip install --python /tmp/check/bin/python dist/*.whl
+          /tmp/check/bin/pyode --version
+          PYODE_STATIONS_FILE=/tmp/check/stations.csv /tmp/check/bin/pyode --list
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

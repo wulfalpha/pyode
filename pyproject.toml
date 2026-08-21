@@ -1,0 +1,56 @@
+[project]
+name = "pyode"
+version = "0.1.0"
+description = "Simple terminal internet radio player with a modern TUI"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-2.0-or-later"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Andrew Davidson", email = "drace.davidson@gmail.com" }
+]
+keywords = ["radio", "tui", "textual", "mpv", "streaming"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio :: Players",
+]
+dependencies = [
+    "textual>=8.2",
+    "python-mpv>=1.0.8",
+    "httpx>=0.28",
+    "platformdirs>=4.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/wulfalpha/pyode"
+Repository = "https://github.com/wulfalpha/pyode"
+Issues = "https://github.com/wulfalpha/pyode/issues"
+
+[project.scripts]
+pyode = "pyode.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1.0",
+    "textual-dev>=1.7",
+    "ruff>=0.14",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
