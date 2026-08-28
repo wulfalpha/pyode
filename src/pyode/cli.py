@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from pyode import __version__
+from pyode import __version__, libmpv
 from pyode.player import LibmpvNotFoundError, MpvPlayer, PlayerState, PlayerStatus
 from pyode.stations import SEED_STATIONS, Station, StationLibrary, default_path
 
@@ -153,6 +153,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--list", action="store_true", dest="list_stations", help="print the library and exit"
     )
+    parser.add_argument(
+        "--libmpv",
+        action="store_true",
+        dest="show_libmpv",
+        help="report where pyode looked for libmpv, and exit",
+    )
 
     headless = parser.add_argument_group("headless playback")
     headless.add_argument("--play", metavar="URL", help="play a stream without the interface")
@@ -166,12 +172,27 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _loader_finds_libmpv() -> bool:
+    """Whether python-mpv would load on its own, without our help."""
+    try:
+        libmpv.load()
+    except libmpv.LibmpvNotFoundError:
+        return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
     if not 0 <= args.volume <= 100:
         parser.error("--volume must be between 0 and 100")
+
+    if args.show_libmpv:
+        # Exits non-zero when libmpv is missing, so it doubles as a check that
+        # a script or an installer can branch on.
+        print(libmpv.report())
+        return 0 if libmpv.find() or _loader_finds_libmpv() else 1
 
     if args.play:
         return _play_headless(args)

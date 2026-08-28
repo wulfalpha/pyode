@@ -21,14 +21,42 @@ Complete and usable.
 
 ## Requirements
 
-Python 3.12+ and **libmpv**:
+Python 3.12+ and **libmpv** — the shared library, which is not always the same
+thing as the mpv player.
 
 | Platform | Install |
 | --- | --- |
 | Arch / CachyOS | `sudo pacman -S mpv` |
 | Debian / Ubuntu | `sudo apt install libmpv2` |
 | Fedora | `sudo dnf install mpv-libs` |
+| openSUSE | `sudo zypper install libmpv2` |
 | macOS | `brew install mpv` |
+| Windows | see below — installing mpv is *not* enough |
+
+pyode finds the library itself, including in the places the dynamic loader
+does not look on its own: Homebrew's `/opt/homebrew/lib` and `/usr/local/lib`,
+MacPorts, Scoop and Chocolatey install trees, and the `lib` directory beside an
+`mpv` binary on your `PATH`. No environment variable should be necessary.
+
+If one is, `PYODE_LIBMPV` takes the library file or the directory holding it,
+and `pyode --libmpv` prints every place that was searched and what was found
+there — start there when playback will not begin.
+
+### Windows
+
+Every Windows mpv package — Scoop, Chocolatey, winget, and the official builds
+— ships `mpv.exe` as a single statically linked binary containing **no libmpv
+DLL**, so `scoop install mpv` alone will not get pyode running. Get the library
+from the separate development build:
+
+1. Download `mpv-dev-x86_64-<date>-git-<hash>.7z` (or `mpv-dev-aarch64-…` on
+   Arm) from [zhongfly/mpv-winbuild releases][winbuild].
+2. Extract `libmpv-2.dll` into `%LOCALAPPDATA%\pyode\lib`.
+
+pyode searches that directory, so nothing else needs configuring. Run
+`pyode --libmpv` to confirm it was picked up. WSL is not required.
+
+[winbuild]: https://github.com/zhongfly/mpv-winbuild/releases/latest
 
 ## Station library
 
@@ -48,6 +76,7 @@ deleting it. Reading accepts `true`/`yes`/`1`/`x`; writing is always
 pyode                          # open the interface
 pyode --station groove         # open playing the first match in your library
 pyode --list                   # print the library and exit
+pyode --libmpv                 # report where libmpv was looked for, and exit
 pyode --no-visualiser          # start with the signal meter hidden
 pyode --volume 60
 pyode --stations ./other.csv   # use a different library file
