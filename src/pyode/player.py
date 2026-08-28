@@ -33,23 +33,31 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol
 
+from pyode import libmpv
+
+# Re-exported: callers catch this around MpvPlayer(), and should not need to
+# know that finding the library is a separate concern from playing audio.
+from pyode.libmpv import LibmpvNotFoundError as LibmpvNotFoundError
+
 log = logging.getLogger(__name__)
 
-try:
-    import mpv as _mpv
-except OSError as exc:  # libmpv shared library missing
-    _mpv = None
-    _IMPORT_ERROR: OSError | None = exc
-else:
-    _IMPORT_ERROR = None
+# libmpv is loaded on first use rather than at import, so `pyode --list` and
+# the tests do not pay for the search -- and so that a machine without libmpv
+# can still run everything that does not make a sound.
+_mpv = None
 
-INSTALL_HINT = (
-    "pyode needs libmpv, which does not appear to be installed.\n"
-    "  Arch/CachyOS:  sudo pacman -S mpv\n"
-    "  Debian/Ubuntu: sudo apt install libmpv2\n"
-    "  Fedora:        sudo dnf install mpv-libs\n"
-    "  macOS:         brew install mpv"
-)
+
+def _backend():
+    """The `mpv` module, imported on first use.
+
+    Raises `LibmpvNotFoundError` when libmpv cannot be found; see
+    `pyode.libmpv` for where it looks and why looking is necessary.
+    """
+    global _mpv
+    if _mpv is None:
+        _mpv = libmpv.load()
+    return _mpv
+
 
 # python-mpv raises plain stdlib exceptions rather than a single base class.
 # ShutdownError subclasses SystemError and PropertyUnavailableError subclasses
@@ -76,10 +84,6 @@ def _normalise_db(raw: object) -> float | None:
     if decibels <= METER_FLOOR_DB:
         return 0.0  # also catches -inf, which astats reports for digital silence
     return (decibels - METER_FLOOR_DB) / -METER_FLOOR_DB
-
-
-class LibmpvNotFoundError(RuntimeError):
-    """Raised when libmpv cannot be loaded."""
 
 
 class PlayerState(StrEnum):
@@ -163,8 +167,7 @@ class MpvPlayer:
         meter: bool = True,
         **mpv_options,
     ) -> None:
-        if _mpv is None:
-            raise LibmpvNotFoundError(INSTALL_HINT) from _IMPORT_ERROR
+        mpv = _backend()
 
         self._on_change = on_change
         self._lock = threading.RLock()
@@ -182,7 +185,7 @@ class MpvPlayer:
         self._closing = False
         self._meter = meter
 
-        self._mpv = _mpv.MPV(
+        self._mpv = mpv.MPV(
             video=False,
             ytdl=False,
             terminal=False,  # keep mpv's own output off our TUI
@@ -276,10 +279,10 @@ class MpvPlayer:
         @self._mpv.event_callback("end-file")
         def _on_end_file(event) -> None:
             data = event.data
-            if data is None or data.reason != _mpv.MpvEventEndFile.ERROR:
+            if data is None or data.reason != _backend().MpvEventEndFile.ERROR:
                 return  # our own stop() also ends the file; only errors matter
             with self._lock:
-                self._error = _mpv.ErrorCode.human_readable(data.error)
+                self._error = _backend().ErrorCode.human_readable(data.error)
                 self._url = None
             self._emit()
 
