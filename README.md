@@ -58,6 +58,21 @@ pyode searches that directory, so nothing else needs configuring. Run
 
 [winbuild]: https://github.com/zhongfly/mpv-winbuild/releases/latest
 
+#### Known limitation: legacy SHOUTcast v1 stations
+
+A handful of older stations run SHOUTcast v1 servers that reply with a bare
+`ICY 200 OK` status line instead of a standards-conformant `HTTP/1.1 200 OK`.
+The [zhongfly/mpv-winbuild][winbuild] libmpv links against libcurl for its
+HTTP handling, and curl treats that line as invalid and refuses the
+connection (`Received HTTP/0.9 when not allowed`) — so the stream fails to
+load with "loading failed" even though the URL is fine. This affects Windows
+only: builds elsewhere typically go through mpv's ffmpeg-based HTTP path,
+which tolerates the `ICY` status line.
+
+There is no in-app workaround; it is a property of the libmpv build in use.
+If you hit it, report the affected station upstream at
+[zhongfly/mpv-winbuild][winbuild] or try a different libmpv build.
+
 ## Station library
 
 Stations live in a CSV file at `~/.config/pyode/stations.csv` (override with
