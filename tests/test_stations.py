@@ -146,6 +146,19 @@ def test_save_leaves_no_temporary_files(csv_path):
     assert [p.name for p in csv_path.parent.iterdir()] == ["stations.csv"]
 
 
+def test_editing_rolls_back_memory_when_save_fails(csv_path, monkeypatch):
+    library = StationLibrary([JAZZ], path=csv_path)
+
+    def explode():
+        raise OSError("disk full")
+
+    monkeypatch.setattr(library, "save", explode)
+    with pytest.raises(OSError, match="disk full"), library.editing():
+        library.remove(JAZZ.key)
+
+    assert list(library) == [JAZZ]
+
+
 # -- collection behaviour -------------------------------------------------
 
 

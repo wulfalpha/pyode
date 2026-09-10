@@ -155,7 +155,7 @@ uv run pytest
 uv run ruff check .
 ```
 
-Until the TUI lands, the entry point is a headless harness for the player:
+The entry point also provides a headless harness for testing streams:
 
 ```bash
 uv run pyode --volume 65 --name "Smooth Jazz" <stream-url>

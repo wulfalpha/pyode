@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [[ "$tag_version" != "$package_version" ]]; then
+            echo "Tag version $tag_version does not match package version $package_version" >&2
+            exit 1
+          fi
+
+      - name: Sync dependencies
+        run: uv sync --python 3.12 --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Build distributions
+        run: uv build --no-sources
+
+      - name: Smoke-test the wheel
+        shell: bash
+        run: |
+          uv venv --python 3.12 /tmp/pyode-release-check
+          uv pip install --python /tmp/pyode-release-check/bin/python dist/*.whl
+          /tmp/pyode-release-check/bin/pyode --version
+          PYODE_STATIONS_FILE=/tmp/pyode-release-check/stations.csv /tmp/pyode-release-check/bin/pyode --list
+
+      - name: Create checksums
+        run: sha256sum dist/* > dist/SHA256SUMS
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/*
+          --verify-tag
+          --generate-notes
+          --title "pyode ${GITHUB_REF_NAME#v}"

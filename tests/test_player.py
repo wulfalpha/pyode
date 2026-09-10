@@ -46,6 +46,11 @@ def test_parse_metadata_tolerates_missing_and_junk():
     assert _parse_metadata({"icy-br": "not-a-number"}, "").bitrate is None
 
 
+def test_parse_metadata_treats_null_fields_as_missing():
+    now = _parse_metadata({"icy-title": None, "icy-name": None}, "Fallback")
+    assert now.display == "Fallback"
+
+
 def test_parse_metadata_strips_whitespace():
     assert _parse_metadata({"icy-title": "  Song  "}, "").title == "Song"
 

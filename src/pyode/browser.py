@@ -16,9 +16,11 @@ the fallback that actually carries the load.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 import socket
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -68,11 +70,33 @@ def _resolve_mirrors() -> list[str]:
 
 async def discover_servers(timeout: float = 3.0) -> list[str]:
     """Best-effort mirror list.  Returns an empty list rather than raising."""
+    loop = asyncio.get_running_loop()
+    finished: asyncio.Future[list[str]] = loop.create_future()
+
+    def resolve() -> None:
+        try:
+            result = _resolve_mirrors()
+        except OSError:
+            result = []
+        # The app may exit while the resolver is still running.
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(_finish, finished, result)
+
+    # Resolver calls cannot reliably be cancelled. A daemon thread keeps a
+    # wedged system resolver from holding up application or interpreter exit;
+    # asyncio.to_thread's default executor waits for all workers at shutdown.
+    threading.Thread(target=resolve, name="pyode-dns", daemon=True).start()
     try:
-        names = await asyncio.wait_for(asyncio.to_thread(_resolve_mirrors), timeout)
-    except (TimeoutError, OSError):
+        names = await asyncio.wait_for(finished, timeout)
+    except TimeoutError:
         return []
     return [f"https://{name}" for name in names]
+
+
+def _finish(future: asyncio.Future[list[str]], result: list[str]) -> None:
+    """Complete a DNS future unless its timeout already cancelled it."""
+    if not future.done():
+        future.set_result(result)
 
 
 def _params(**kwargs: Any) -> dict[str, str]:
@@ -203,25 +227,13 @@ class RadioBrowser:
 
     async def countries(self) -> list[Country]:
         payload = await self._get("/json/countries")
-        return [
-            Country(
-                name=str(row.get("name") or ""),
-                code=str(row.get("iso_3166_1") or ""),
-                station_count=int(row.get("stationcount") or 0),
-            )
-            for row in payload
-            if isinstance(row, dict) and row.get("name")
-        ]
+        return _to_countries(payload)
 
     async def tags(self, limit: int = 100) -> list[Tag]:
         payload = await self._get(
             "/json/tags", _params(limit=limit, order="stationcount", reverse=True)
         )
-        return [
-            Tag(name=str(row.get("name") or ""), station_count=int(row.get("stationcount") or 0))
-            for row in payload
-            if isinstance(row, dict) and row.get("name")
-        ]
+        return _to_tags(payload)
 
     # -- courtesy ---------------------------------------------------------
 
@@ -267,3 +279,32 @@ def _to_stations(payload: list[Any]) -> list[Station]:
         seen.add(station.key)
         stations.append(station)
     return stations
+
+
+def _count(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _rows(payload: Any, endpoint: str) -> list[dict]:
+    if not isinstance(payload, list):
+        raise RadioBrowserError(f"expected a list from {endpoint}")
+    return [row for row in payload if isinstance(row, dict)]
+
+
+def _to_countries(payload: Any) -> list[Country]:
+    return [
+        Country(str(row["name"]), str(row.get("iso_3166_1") or ""), _count(row.get("stationcount")))
+        for row in _rows(payload, "countries")
+        if row.get("name")
+    ]
+
+
+def _to_tags(payload: Any) -> list[Tag]:
+    return [
+        Tag(str(row["name"]), _count(row.get("stationcount")))
+        for row in _rows(payload, "tags")
+        if row.get("name")
+    ]

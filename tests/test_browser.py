@@ -151,6 +151,18 @@ async def test_nameless_facets_are_ignored():
     assert await api.tags() == []
 
 
+@pytest.mark.parametrize("method", ["countries", "tags"])
+async def test_facets_reject_unexpected_payload_shapes(method):
+    api, _ = make_api({"error": "nope"})
+    with pytest.raises(RadioBrowserError, match="expected a list"):
+        await getattr(api, method)()
+
+
+async def test_facets_tolerate_junk_counts():
+    api, _ = make_api([{"name": "pop", "stationcount": "unknown"}])
+    assert await api.tags() == [Tag(name="pop", station_count=0)]
+
+
 # -- failure modes --------------------------------------------------------
 
 
@@ -224,6 +236,15 @@ async def test_discovery_survives_a_dns_outage(monkeypatch):
 
     monkeypatch.setattr("socket.getaddrinfo", explode)
     assert await discover_servers() == []
+
+
+async def test_discovery_timeout_does_not_wait_for_the_resolver(monkeypatch):
+    import threading
+
+    release = threading.Event()
+    monkeypatch.setattr("pyode.browser._resolve_mirrors", release.wait)
+    assert await discover_servers(timeout=0.01) == []
+    release.set()
 
 
 async def test_explicit_base_url_skips_discovery(monkeypatch):

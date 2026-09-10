@@ -20,6 +20,7 @@ import logging
 import os
 import tempfile
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -267,10 +268,31 @@ class StationLibrary:
                 os.fsync(fh.fileno())  # rename is only atomic if the data landed
             os.replace(tmp, self.path)
             tmp = None
+            # Persist the directory entry as well as the file contents. Some
+            # platforms do not support opening directories, so this is best effort.
+            if hasattr(os, "O_DIRECTORY"):
+                with contextlib.suppress(OSError):
+                    directory_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
         finally:
             if tmp is not None:
                 with contextlib.suppress(OSError):
                     os.unlink(tmp)
+
+    @contextmanager
+    def editing(self) -> Iterator[StationLibrary]:
+        """Persist a group of mutations, restoring memory if the write fails."""
+        previous = list(self._stations)
+        try:
+            yield self
+            self.save()
+        except Exception:
+            self._stations = previous
+            self._keys = {station.key for station in previous}
+            raise
 
     # -- mutation ---------------------------------------------------------
 

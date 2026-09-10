@@ -128,12 +128,17 @@ class SearchScreen(ModalScreen[int]):
         if not 0 <= event.cursor_row < len(self._results):
             return
         station = self._results[event.cursor_row]
-        if self._library.add(station):
-            self._library.save()
-            self._added += 1
-            self._status(f"Added {station.name}.")
-        else:
+        try:
+            with self._library.editing():
+                added = self._library.add(station)
+        except OSError as exc:
+            self._status(f"Could not save {station.name}: {exc}")
+            return
+        if not added:
             self._status(f"{station.name} is already in your library.")
+            return
+        self._added += 1
+        self._status(f"Added {station.name}.")
 
     def action_close(self) -> None:
         self.dismiss(self._added)
@@ -344,18 +349,26 @@ class PyodeApp(App[None]):
         station = self.selected
         if station is None:
             return
-        self.library.toggle_favorite(station.key)
-        self.library.save()
+        try:
+            with self.library.editing():
+                self.library.toggle_favorite(station.key)
+        except OSError as exc:
+            self.notify(f"Could not save favourites: {exc}", severity="error")
         self.refresh_stations()
 
     def action_remove(self) -> None:
         station = self.selected
         if station is None:
             return
+        try:
+            with self.library.editing():
+                self.library.remove(station.key)
+        except OSError as exc:
+            self.notify(f"Could not remove {station.name}: {exc}", severity="error")
+            self.refresh_stations()
+            return
         if station.key == self._playing_key:
             self.action_stop()
-        self.library.remove(station.key)
-        self.library.save()
         self.refresh_stations()
         self.notify(f"Removed {station.name}.")
 

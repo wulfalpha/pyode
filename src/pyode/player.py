@@ -145,7 +145,7 @@ class Player(Protocol):
 
 
 def _parse_metadata(raw: dict | None, station: str) -> NowPlaying:
-    meta = {str(k).lower(): str(v) for k, v in (raw or {}).items()}
+    meta = {str(k).lower(): "" if v is None else str(v) for k, v in (raw or {}).items()}
     bitrate = meta.get("icy-br", "").strip()
     return NowPlaying(
         station=station,
@@ -279,10 +279,16 @@ class MpvPlayer:
         @self._mpv.event_callback("end-file")
         def _on_end_file(event) -> None:
             data = event.data
-            if data is None or data.reason != _backend().MpvEventEndFile.ERROR:
-                return  # our own stop() also ends the file; only errors matter
+            terminal = _backend().MpvEventEndFile
+            if data is None or data.reason not in (terminal.EOF, terminal.ERROR):
+                # ABORTED is emitted by stop() and when switching stations;
+                # RESTARTED and REDIRECT are also intermediate transitions.
+                return
             with self._lock:
-                self._error = _backend().ErrorCode.human_readable(data.error)
+                if data.reason == terminal.ERROR:
+                    self._error = _backend().ErrorCode.human_readable(data.error)
+                else:
+                    self._error = "stream ended"
                 self._url = None
             self._emit()
 
@@ -333,6 +339,13 @@ class MpvPlayer:
 
     # -- controls ---------------------------------------------------------
 
+    def _failed(self, action: str, exc: Exception) -> None:
+        with self._lock:
+            self._error = f"could not {action}: {exc}"
+            self._url = None
+        log.debug("could not %s", action, exc_info=True)
+        self._emit()
+
     def play(self, url: str, station_name: str = "") -> None:
         with self._lock:
             self._url = url
@@ -344,8 +357,12 @@ class MpvPlayer:
             self._codec = ""
             self._bitrate_bps = None
             self._cache_seconds = 0.0
-        self._mpv.play(url)
-        self._mpv.pause = False  # a previous pause would otherwise carry over
+        try:
+            self._mpv.play(url)
+            self._mpv.pause = False  # a previous pause would otherwise carry over
+        except _MPV_ERRORS as exc:
+            self._failed("start playback", exc)
+            return
         self._emit()
 
     def stop(self) -> None:
@@ -368,14 +385,21 @@ class MpvPlayer:
             if self._url is None:
                 return
             paused = self._paused
-        self._mpv.pause = not paused
+        try:
+            self._mpv.pause = not paused
+        except _MPV_ERRORS as exc:
+            self._failed("change pause state", exc)
         # the `pause` observer emits for us
 
     def set_volume(self, value: int) -> None:
         value = _clamp(value)
         with self._lock:
             self._volume = value
-        self._mpv.volume = value
+        try:
+            self._mpv.volume = value
+        except _MPV_ERRORS as exc:
+            self._failed("set volume", exc)
+            return
         self._emit()
 
     def adjust_volume(self, delta: int) -> None:
@@ -386,7 +410,10 @@ class MpvPlayer:
     def toggle_mute(self) -> None:
         with self._lock:
             muted = self._muted
-        self._mpv.mute = not muted
+        try:
+            self._mpv.mute = not muted
+        except _MPV_ERRORS as exc:
+            self._failed("change mute state", exc)
         # the `mute` observer emits for us
 
     def close(self) -> None:

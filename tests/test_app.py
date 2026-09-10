@@ -142,6 +142,33 @@ async def test_removing_the_playing_station_stops_it(app, player):
         assert pilot.app._playing_key is None
 
 
+async def test_failed_favourite_save_rolls_back_and_notifies(app, library, monkeypatch):
+    def explode():
+        raise OSError("disk full")
+
+    monkeypatch.setattr(library, "save", explode)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        toasts = []
+        pilot.app.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+        await pilot.press("f")
+        assert library[0].favorite is True
+        assert "disk full" in toasts[0][0]
+        assert toasts[0][1]["severity"] == "error"
+
+
+async def test_failed_remove_save_keeps_station_and_playback(app, library, player, monkeypatch):
+    def explode():
+        raise OSError("read only")
+
+    monkeypatch.setattr(library, "save", explode)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("p", "d")
+        assert len(library) == 3
+        assert ("stop",) not in player.calls
+
+
 # -- visualiser -----------------------------------------------------------
 
 
