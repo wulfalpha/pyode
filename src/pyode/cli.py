@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from pyode import __version__, libmpv
+from pyode import __version__, config, libmpv
 from pyode.player import LibmpvNotFoundError, MpvPlayer, PlayerState, PlayerStatus
 from pyode.stations import SEED_STATIONS, Station, StationLibrary, default_path
 
@@ -116,6 +116,8 @@ def _run_tui(
     *,
     volume: int,
     visualiser: bool,
+    keymap: str,
+    config_path: Path,
 ) -> int:
     from pyode.app import PyodeApp
 
@@ -124,7 +126,14 @@ def _run_tui(
     except LibmpvNotFoundError as exc:
         print(exc, file=sys.stderr)
         return 1
-    PyodeApp(library=library, player=player, visualiser=visualiser, autoplay=autoplay).run()
+    PyodeApp(
+        library=library,
+        player=player,
+        visualiser=visualiser,
+        autoplay=autoplay,
+        keymap=keymap,
+        config_path=config_path,
+    ).run()
     return 0
 
 
@@ -146,10 +155,19 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help="open playing the first library station matching NAME",
     )
-    parser.add_argument("--volume", type=int, default=80, metavar="0-100", help="starting volume")
-    parser.add_argument(
-        "--no-visualiser", action="store_true", help="start with the signal meter hidden"
+    parser.add_argument("--volume", type=int, default=None, metavar="0-100", help="starting volume")
+    parser.add_argument("--keymap", choices=("standard", "vim"), help="saved keyboard layout")
+    meter = parser.add_mutually_exclusive_group()
+    meter.add_argument(
+        "--visualiser", dest="visualiser", action="store_true", help="show the signal meter (saved)"
     )
+    meter.add_argument(
+        "--no-visualiser",
+        dest="visualiser",
+        action="store_false",
+        help="hide the signal meter (saved)",
+    )
+    parser.set_defaults(visualiser=None)
     parser.add_argument(
         "--list", action="store_true", dest="list_stations", help="print the library and exit"
     )
@@ -185,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if not 0 <= args.volume <= 100:
+    if args.volume is not None and not 0 <= args.volume <= 100:
         parser.error("--volume must be between 0 and 100")
 
     if args.show_libmpv:
@@ -195,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if libmpv.find() or _loader_finds_libmpv() else 1
 
     if args.play:
+        args.volume = args.volume if args.volume is not None else 80
         return _play_headless(args)
 
     library = load_library(args.stations)
@@ -210,7 +229,20 @@ def main(argv: list[str] | None = None) -> int:
             print("Run pyode --list to see what is there.", file=sys.stderr)
             return 1
 
-    return _run_tui(library, autoplay, volume=args.volume, visualiser=not args.no_visualiser)
+    config_path = config.default_path()
+    try:
+        prefs = config.Preferences.load(config_path)
+    except (OSError, ValueError) as exc:
+        print(f"Could not read preferences at {config_path}: {exc}", file=sys.stderr)
+        return 1
+    return _run_tui(
+        library,
+        autoplay,
+        volume=args.volume if args.volume is not None else prefs.volume,
+        visualiser=args.visualiser if args.visualiser is not None else prefs.visualiser,
+        keymap=args.keymap or prefs.keymap,
+        config_path=config_path,
+    )
 
 
 if __name__ == "__main__":

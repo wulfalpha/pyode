@@ -19,6 +19,25 @@ Complete and usable.
 - [x] Phase 4 — Textual UI
 - [x] Phase 5 — CLI polish
 
+## Installation
+
+Install libmpv for your platform (below), then install the Python application:
+
+```bash
+uv tool install pyode-radio
+pyode
+```
+
+Or install into an activated Python virtual environment with `pip install pyode-radio`.
+The distribution is named `pyode-radio` because [PyODE on PyPI](https://pypi.org/project/PyODE/)
+is an unrelated physics library. Both installers create the `pyode` command automatically; no shell wrapper or
+source checkout is needed. If uv's tool directory is not on PATH, run
+`uv tool update-shell` and restart your shell.
+
+For an unreleased checkout, use `uv tool install .` or `pip install .`.
+The 0.2.0 changes described here become available by package name after the
+release is published to PyPI. libmpv remains a separately installed native dependency.
+
 ## Requirements
 
 Python 3.12+ and **libmpv** — the shared library, which is not always the same
@@ -93,6 +112,9 @@ pyode --station groove         # open playing the first match in your library
 pyode --list                   # print the library and exit
 pyode --libmpv                 # report where libmpv was looked for, and exit
 pyode --no-visualiser          # start with the signal meter hidden
+pyode --keymap vim              # save Vim controls (arrows remain available)
+pyode --keymap standard         # return to the standard controls
+pyode --visualiser              # show the signal meter again
 pyode --volume 60
 pyode --stations ./other.csv   # use a different library file
 pyode --play <url> --seconds 10 --silent   # headless, for testing a stream
@@ -115,16 +137,43 @@ needle marks where the playing station falls in your library.
 
 | Key | Does |
 | --- | --- |
-| `p` / `Enter` | Play the selected station |
+| `↑` / `↓` (Vim: `k` / `j`) | Previous / next station |
+| `→` / `p` / `Enter` (Vim: `l`) | Play the selected station |
 | `space` | Pause and resume |
-| `s` | Stop |
+| `←` / `s` (Vim: `h`) | Stop |
 | `f` | Favourite the selected station |
+| `F` (Shift+f) | Toggle favourites-only / all stations |
 | `d` | Remove it from the library |
+| `u` | Undo the last removal, restoring its position |
 | `+` / `-` | Volume |
 | `m` | Mute |
 | `v` | Show or hide the signal meter |
 | `/` | Search the directory |
+| `?` | Show controls for the active keymap |
 | `q` | Quit |
+
+In directory search, Enter submits the query or adds the highlighted result,
+Tab changes focus, and Escape closes the dialog. Up/down work in the results;
+Vim mode adds j/k there. Text fields retain normal typing and cursor movement.
+Playback and library shortcuts apply only to the main screen. Undo lasts for
+this session and restores the station without restarting playback.
+
+### Preferences
+
+The keymap, volume, and signal meter visibility are saved in the platform's
+pyode configuration directory (`~/.config/pyode/config.toml` on Linux).
+Use `PYODE_CONFIG_FILE` to choose another path. For example:
+
+```toml
+keymap = "vim"
+volume = 60
+visualiser = true
+```
+
+CLI options override saved values and are remembered when the interface opens.
+Volume and visualiser changes in the interface are saved immediately. Headless
+playback and diagnostic commands do not change preferences. Invalid settings
+produce an error identifying the file, so it can be corrected without losing it.
 
 The meter plots signal level over time, not a frequency spectrum, because time
 is what the player measures. It reads the decoded stream ahead of the volume
@@ -158,9 +207,18 @@ uv run ruff check .
 The entry point also provides a headless harness for testing streams:
 
 ```bash
-uv run pyode --volume 65 --name "Smooth Jazz" <stream-url>
-uv run pyode --silent --seconds 10 <stream-url>   # decode without an audio device
+uv run pyode --volume 65 --name "Smooth Jazz" --play <stream-url>
+uv run pyode --silent --seconds 10 --play <stream-url>   # decode without an audio device
 ```
+
+Build and check an installed release (requires network access for dependencies):
+
+```bash
+uv build --out-dir dist/0.2.0-radio
+uv run python scripts/check_install.py dist/0.2.0-radio
+```
+
+See [the release procedure](docs/releasing.md) for PyPI setup and publishing.
 
 ## Licence
 

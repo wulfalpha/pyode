@@ -467,3 +467,151 @@ async def test_the_controls_survive_every_size(library, player, api):
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             assert pilot.app.query_one(ControlBar).display
+
+
+@pytest.mark.parametrize(
+    "keymap,down,up,play,stop",
+    [
+        ("standard", "down", "up", "right", "left"),
+        ("vim", "j", "k", "l", "h"),
+        ("vim", "down", "up", "right", "left"),
+    ],
+)
+async def test_navigation_and_transport(library, player, api, keymap, down, up, play, stop):
+    app = PyodeApp(library=library, player=player, api=api, keymap=keymap)
+    async with app.run_test() as pilot:
+        await pilot.press(down, down, up, play, "space", stop)
+        assert player.calls[0] == ("play", library[1].url, library[1].name)
+        assert [c[0] for c in player.calls] == ["play", "toggle_pause", "stop"]
+
+
+async def test_vim_keys_are_opt_in(app, player):
+    async with app.run_test() as pilot:
+        await pilot.press("j", "l", "h")
+        assert app.selected == app.library[0]
+        assert not player.calls
+
+
+async def test_search_typing_and_results_do_not_control_player(library, player, api):
+    app = PyodeApp(library=library, player=player, api=api, keymap="vim")
+    async with app.run_test() as pilot:
+        await pilot.press("slash", "h", "j", "k", "l", "space", "d", "f", "q")
+        screen = app.screen
+        assert screen.query_one(Input).value == "hjkl dfq"
+        table = screen.query_one("#results", DataTable)
+        screen._results = list(library)
+        for station in library:
+            table.add_row(station.name, station.country, "")
+        table.focus()
+        await pilot.press("j", "j", "k")
+        assert table.cursor_row == 1
+        await pilot.press("h", "l", "right", "left", "space", "d", "f", "p", "s", "q")
+        assert not player.calls
+        assert len(library) == 3
+        assert library[0].favorite
+        await pilot.press("escape", "l")
+        assert player.calls[0][0] == "play"
+
+
+async def test_filter_uses_visible_station_identity_and_undo_restores_order(app, library, player):
+    library.set_favorite(library[0].key, False)
+    library.set_favorite(library[2].key)
+    original = list(library)
+    async with app.run_test() as pilot:
+        await pilot.press("F", "right")
+        assert player.calls[0] == ("play", original[2].url, original[2].name)
+        await pilot.press("d")
+        assert app.selected is None
+        await pilot.press("u")
+        assert list(library) == original
+        assert list(StationLibrary.load(library.path)) == original
+        assert app.selected == original[2]
+        await pilot.press("F")
+        assert app.selected == original[2]
+
+
+async def test_unfavourite_last_filtered_station_and_stop(app, player):
+    async with app.run_test() as pilot:
+        await pilot.press("F", "right", "f")
+        assert app.selected is None
+        assert app.query_one("#stations-empty").display
+        await pilot.press("left")
+        assert player.calls[-1] == ("stop",)
+        await pilot.press("F")
+        assert app.query_one("#station-table", DataTable).row_count == 3
+
+
+async def test_failed_undo_can_be_retried(app, library, monkeypatch):
+    original = list(library)
+    async with app.run_test() as pilot:
+        await pilot.press("d")
+        save = library.save
+
+        def fail():
+            raise OSError("disk full")
+
+        monkeypatch.setattr(library, "save", fail)
+        await pilot.press("u")
+        assert len(library) == 2
+        assert app._removed is not None
+        monkeypatch.setattr(library, "save", save)
+        await pilot.press("u")
+        assert list(library) == original
+
+
+async def test_help_shows_keymap_and_closes(library, player, api):
+    from pyode.app import HelpScreen
+
+    app = PyodeApp(library=library, player=player, api=api, keymap="vim")
+    async with app.run_test(size=(40, 16)) as pilot:
+        await pilot.press("question_mark")
+        assert isinstance(app.screen, HelpScreen)
+        assert "vim" in str(app.screen.query_one(Static).content)
+        await pilot.press("d", "l")
+        assert len(library) == 3 and not player.calls
+        await pilot.press("escape")
+        assert not isinstance(app.screen, HelpScreen)
+
+
+async def test_preferences_save_after_changes(library, player, api, tmp_path):
+    from pyode.config import Preferences
+
+    path = tmp_path / "prefs.toml"
+    app = PyodeApp(library=library, player=player, api=api, keymap="vim", config_path=path)
+    async with app.run_test() as pilot:
+        await pilot.press("minus", "v")
+        assert Preferences.load(path) == Preferences("vim", player.status.volume, False)
+
+
+async def test_tick_survives_partial_control_bar_teardown(app):
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._timer.stop()
+        await app.query_one("#transport").remove()
+        app._last_signature = None
+        app._tick()
+
+
+async def test_undo_does_not_duplicate_a_readded_station(app, library):
+    station = library[0]
+    async with app.run_test() as pilot:
+        await pilot.press("d")
+        with library.editing():
+            library.add(station)
+        await pilot.press("u")
+        assert len(library) == 3
+        assert sum(item.key == station.key for item in library) == 1
+
+
+async def test_preference_write_failure_keeps_controls_working(library, player, api, tmp_path):
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("keep")
+    app = PyodeApp(library=library, player=player, api=api, config_path=blocker / "config.toml")
+    notices = []
+    app.notify = lambda message, **kwargs: notices.append(message)
+    async with app.run_test() as pilot:
+        await pilot.press("minus", "v", "right")
+        assert player.calls[-1][0] == "play"
+        assert not app._visualiser
+        assert any("Could not save preferences" in notice for notice in notices)
+        assert blocker.read_text() == "keep"

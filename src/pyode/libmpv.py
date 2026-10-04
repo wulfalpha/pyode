@@ -258,7 +258,8 @@ def load():
     if "mpv" in sys.modules:
         return sys.modules["mpv"]
 
-    if _loader_can_find_it():
+    path = _env_override()
+    if path is None and _loader_can_find_it():
         try:
             import mpv  # noqa: PLC0415 -- the whole point is to import late
         except OSError as exc:
@@ -267,7 +268,7 @@ def load():
             raise LibmpvNotFoundError(f"{exc}\n\n{install_hint()}") from exc
         return mpv
 
-    path = find()
+    path = path or find()
     if path is None:
         raise LibmpvNotFoundError(install_hint())
 

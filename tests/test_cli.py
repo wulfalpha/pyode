@@ -116,7 +116,7 @@ def test_unknown_station_name_fails_with_guidance(path, capsys):
 def test_named_station_is_handed_to_the_interface(path, monkeypatch):
     seen = {}
 
-    def fake_run(library, autoplay, *, volume, visualiser):
+    def fake_run(library, autoplay, *, volume, visualiser, **kwargs):
         seen.update(autoplay=autoplay, volume=volume, visualiser=visualiser)
         return 0
 
@@ -144,3 +144,41 @@ def test_version_exits_cleanly():
     with pytest.raises(SystemExit) as exit_info:
         cli.main(["--version"])
     assert exit_info.value.code == 0
+
+
+@pytest.mark.parametrize(
+    "flags,expected",
+    [
+        ([], ("vim", 35, False)),
+        (["--keymap", "standard", "--volume", "0", "--visualiser"], ("standard", 0, True)),
+    ],
+)
+def test_saved_preferences_and_cli_overrides(path, monkeypatch, flags, expected):
+    from pyode import config
+
+    config.Preferences("vim", 35, False).save(config.default_path())
+    seen = {}
+    monkeypatch.setattr(cli, "_run_tui", lambda lib, auto, **kw: seen.update(kw) or 0)
+    assert cli.main(["--stations", str(path), *flags]) == 0
+    assert (seen["keymap"], seen["volume"], seen["visualiser"]) == expected
+
+
+def test_bad_preferences_report_path_but_do_not_break_list(path, capsys):
+    from pyode import config
+
+    config.default_path().write_text('keymap = "oops"')
+    assert cli.main(["--stations", str(path)]) == 1
+    assert str(config.default_path()) in capsys.readouterr().err
+    assert cli.main(["--stations", str(path), "--list"]) == 0
+
+
+def test_headless_ignores_and_preserves_preferences(monkeypatch):
+    from pyode import config
+
+    path = config.default_path()
+    path.write_text('keymap = "invalid"')
+    seen = {}
+    monkeypatch.setattr(cli, "_play_headless", lambda args: seen.update(vars(args)) or 0)
+    assert cli.main(["--play", "https://example.invalid/radio"]) == 0
+    assert seen["volume"] == 80
+    assert path.read_text() == 'keymap = "invalid"'

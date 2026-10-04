@@ -18,6 +18,7 @@ from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Label, Static
 
+from pyode.keys import footer_text
 from pyode.player import PlayerState, PlayerStatus
 from pyode.stations import Station
 
@@ -212,11 +213,15 @@ class NowPlaying(Vertical):
 class ControlBar(Horizontal):
     """Transport state, volume, and the keys that drive them."""
 
+    def __init__(self, *, keymap: str = "standard", **kwargs):
+        super().__init__(**kwargs)
+        self.keymap = keymap
+
     def compose(self):
         yield Static("□ Off air", id="transport")
         yield Static("", id="ctl-station")
         yield Static("", id="ctl-volume")
-        yield Static("space pause · s stop · / search · q quit", id="ctl-keys")
+        yield Static(footer_text(self.keymap), id="ctl-keys")
 
     def update(self, status: PlayerStatus, station: Station | None) -> None:
         glyph, label, css_class = TRANSPORT[status.state]

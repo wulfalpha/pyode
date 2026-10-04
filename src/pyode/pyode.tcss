@@ -291,3 +291,18 @@ SearchScreen {
     height: 1;
     color: $quiet;
 }
+
+HelpScreen {
+    align: center middle;
+    background: $background 80%;
+}
+
+#help-box {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: round $dial;
+    background: $background;
+}

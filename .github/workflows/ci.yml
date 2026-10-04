@@ -35,19 +35,23 @@ jobs:
           enable-cache: true
 
       - name: Sync dependencies
-        run: uv sync --python ${{ matrix.python-version }}
+        run: uv sync --locked --python ${{ matrix.python-version }}
 
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check .
 
       - name: Check formatting
-        run: uv run ruff format --check src tests
+        run: uv run ruff format --check .
 
       - name: Test
         run: uv run pytest -q
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
 
@@ -57,14 +61,10 @@ jobs:
       - name: Build the wheel
         run: uv build
 
-      - name: Check it installs and runs on a clean interpreter
-        run: |
-          uv venv --python 3.12 /tmp/check
-          uv pip install --python /tmp/check/bin/python dist/*.whl
-          /tmp/check/bin/pyode --version
-          PYODE_STATIONS_FILE=/tmp/check/stations.csv /tmp/check/bin/pyode --list
+      - name: Check pip, uv tool, and the installed TUI
+        run: uv run --no-project --python 3.12 python scripts/check_install.py dist
 
       - uses: actions/upload-artifact@v7
         with:
-          name: dist
+          name: dist-${{ matrix.os }}
           path: dist/

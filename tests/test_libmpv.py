@@ -203,3 +203,27 @@ def test_report_runs_on_every_platform(on_platform, monkeypatch):
         assert "searched:" in report
         assert libmpv.ENV_VAR in report
         assert "result:" in report
+
+
+def test_load_honours_override_before_system_loader(tmp_path, monkeypatch):
+    import builtins
+    from types import SimpleNamespace
+
+    libmpv = pyode.libmpv
+    target = touch(tmp_path, "libmpv.so.2")
+    monkeypatch.setenv(libmpv.ENV_VAR, str(target))
+    monkeypatch.delitem(sys.modules, "mpv", raising=False)
+    monkeypatch.setattr(libmpv, "_loader_can_find_it", lambda: True)
+    original_import = builtins.__import__
+    original_find = libmpv.ctypes.util.find_library
+    backend = SimpleNamespace()
+
+    def import_backend(name, *args, **kwargs):
+        if name == "mpv":
+            assert libmpv.ctypes.util.find_library("mpv") == str(target)
+            return backend
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_backend)
+    assert libmpv.load() is backend
+    assert libmpv.ctypes.util.find_library is original_find

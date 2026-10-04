@@ -46,13 +46,15 @@ jobs:
       - name: Build distributions
         run: uv build --no-sources
 
-      - name: Smoke-test the wheel
-        shell: bash
-        run: |
-          uv venv --python 3.12 /tmp/pyode-release-check
-          uv pip install --python /tmp/pyode-release-check/bin/python dist/*.whl
-          /tmp/pyode-release-check/bin/pyode --version
-          PYODE_STATIONS_FILE=/tmp/pyode-release-check/stations.csv /tmp/pyode-release-check/bin/pyode --list
+      - name: Check pip, uv tool, and the installed TUI
+        run: uv run python scripts/check_install.py dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
 
       - name: Create checksums
         run: sha256sum dist/* > dist/SHA256SUMS
@@ -66,3 +68,21 @@ jobs:
           --verify-tag
           --generate-notes
           --title "pyode ${GITHUB_REF_NAME#v}"
+
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pyode-radio/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: distributions
+          path: dist
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always dist/*.whl dist/*.tar.gz

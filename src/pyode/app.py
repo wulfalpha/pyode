@@ -9,10 +9,12 @@ keeps `player` safe (see its module docstring).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -20,6 +22,8 @@ from textual.timer import Timer
 from textual.widgets import DataTable, Input, Label, Static
 
 from pyode.browser import RadioBrowser, RadioBrowserError
+from pyode.config import Preferences
+from pyode.keys import CONTROLS, bindings, help_text, table_action
 from pyode.player import MpvPlayer, PlayerState, PlayerStatus
 from pyode.stations import Station, StationLibrary
 from pyode.widgets import ControlBar, DialRule, NowPlaying, SignalMeter, TopBar
@@ -51,7 +55,34 @@ def _row(station: Station, width: int) -> str:
     return f"{mark}{name}{' ' * gap}{quality}"
 
 
-class StationTable(DataTable):
+class NavigationTable(DataTable):
+    """Handle list motions locally, leaving Input editing untouched."""
+
+    def on_key(self, event: events.Key) -> None:
+        action = table_action(event.key, self.app.keymap, search=self.id == "results")
+        if action is None:
+            return
+        event.stop()
+        event.prevent_default()
+        if action == "cursor_up":
+            self.action_cursor_up()
+        elif action == "cursor_down":
+            self.action_cursor_down()
+        elif action == "play":
+            self.app.action_play()
+        elif action == "stop":
+            self.app.action_stop()
+
+
+class HelpScreen(ModalScreen):
+    BINDINGS = [Binding("escape", "dismiss", "Close")]
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="help-box"):
+            yield Static(help_text(self.app.keymap))
+
+
+class StationTable(NavigationTable):
     """A station list that rebuilds when its own width changes.
 
     Rows are laid out to an exact character width, so they are only correct for
@@ -83,7 +114,7 @@ class SearchScreen(ModalScreen[int]):
         with Vertical(id="search-box"):
             yield Label("SEARCH THE DIRECTORY", classes="eyebrow")
             yield Input(placeholder="Station name or tag")
-            yield DataTable(id="results", cursor_type="row")
+            yield NavigationTable(id="results", cursor_type="row")
             yield Static("Type a search and press Enter.", id="search-status")
 
     def on_mount(self) -> None:
@@ -148,20 +179,7 @@ class PyodeApp(App[None]):
     CSS_PATH = "pyode.tcss"
     TITLE = "pyode"
 
-    BINDINGS = [
-        Binding("p", "play", "Play"),
-        Binding("space", "toggle_pause", "Pause"),
-        Binding("s", "stop", "Stop"),
-        Binding("f", "toggle_favourite", "Favourite"),
-        Binding("d", "remove", "Remove"),
-        Binding("m", "toggle_mute", "Mute"),
-        Binding("plus", "volume(5)", "Louder", show=False),
-        Binding("equals_sign", "volume(5)", "Louder", show=False),
-        Binding("minus", "volume(-5)", "Quieter", show=False),
-        Binding("v", "toggle_visualiser", "Visualiser"),
-        Binding("slash", "search", "Search"),
-        Binding("q", "quit", "Quit"),
-    ]
+    BINDINGS = bindings()
 
     def __init__(
         self,
@@ -171,11 +189,22 @@ class PyodeApp(App[None]):
         *,
         visualiser: bool = True,
         autoplay: Station | None = None,
+        keymap: str = "standard",
+        config_path: Path | None = None,
     ) -> None:
         super().__init__()
         self.library = library if library is not None else StationLibrary.load()
         self.player = player if player is not None else MpvPlayer()
         self.api = api if api is not None else RadioBrowser()
+        self.keymap = keymap
+        if keymap == "vim":
+            for control in CONTROLS:
+                if control.vim:
+                    self.bind(control.vim, control.action)
+        self._config_path = config_path
+        self._favourites_only = False
+        self._visible: list[Station] = []
+        self._removed: tuple[Station, int] | None = None
         self._visualiser = visualiser
         self._autoplay = autoplay
         self._playing_key: str | None = None
@@ -189,7 +218,7 @@ class PyodeApp(App[None]):
         yield TopBar()
         with Horizontal(id="body"):
             with Vertical(id="stations"):
-                yield Label("STATIONS", classes="eyebrow")
+                yield Label("STATIONS", id="stations-title", classes="eyebrow")
                 yield StationTable(
                     id="station-table",
                     cursor_type="row",
@@ -203,11 +232,13 @@ class PyodeApp(App[None]):
                 with Vertical(id="signal-pane"):
                     yield Label("SIGNAL", classes="eyebrow")
                     yield SignalMeter(id="signal")
-        yield ControlBar(id="controls")
+        yield ControlBar(keymap=self.keymap, id="controls")
 
     def on_mount(self) -> None:
         self.query_one(SignalMeter).enabled = self._visualiser
         self.refresh_stations()
+        self.query_one("#station-table", StationTable).focus()
+        self._save_preferences()
         self._timer = self.set_interval(TICK, self._tick)
         if self._autoplay is not None:
             self._start(self._autoplay)
@@ -229,18 +260,26 @@ class PyodeApp(App[None]):
         table = self.query_one("#station-table", StationTable)
         empty = self.query_one("#stations-empty", Static)
         # An empty library is an invitation, not a blank pane.
-        empty.display = not len(self.library)
-        empty.update("No stations yet.\nPress / to search the directory.")
-        table.display = bool(len(self.library))
+        self._visible = self.library.favorites() if self._favourites_only else list(self.library)
+        self.query_one("#stations-title", Label).update(
+            "FAVOURITES" if self._favourites_only else "STATIONS"
+        )
+        empty.display = not self._visible
+        empty.update(
+            "No favourites yet.\nPress F to show all stations."
+            if self._favourites_only
+            else "No stations yet.\nPress / to search the directory."
+        )
+        table.display = bool(self._visible)
         keep = table.cursor_row if cursor is None else cursor
         # cell_padding is 0, so the column is exactly the row string we build.
         width = max(20, table.size.width)
         table.clear(columns=True)
         table.add_column("Station", width=width)
-        for station in self.library:
+        for station in self._visible:
             table.add_row(_row(station, width))
-        if len(self.library):
-            table.move_cursor(row=max(0, min(keep, len(self.library) - 1)))
+        if self._visible:
+            table.move_cursor(row=max(0, min(keep, len(self._visible) - 1)))
         self._sync_dial()
 
     def _sync_dial(self) -> None:
@@ -255,7 +294,7 @@ class PyodeApp(App[None]):
     @property
     def selected(self) -> Station | None:
         row = self.query_one("#station-table", StationTable).cursor_row
-        return self.library[row] if 0 <= row < len(self.library) else None
+        return self._visible[row] if 0 <= row < len(self._visible) else None
 
     def _playing_station(self) -> Station | None:
         return self.library.find(self._playing_key) if self._playing_key else None
@@ -283,8 +322,13 @@ class PyodeApp(App[None]):
             round(status.cache_seconds),
         )
         if signature != self._last_signature:
+            try:
+                self._apply(status)
+            except NoMatches:
+                # Children can already be removed while their parent widgets
+                # are still queryable during shutdown.
+                return
             self._last_signature = signature
-            self._apply(status)
 
     def _apply(self, status: PlayerStatus) -> None:
         station = self._playing_station()
@@ -302,6 +346,44 @@ class PyodeApp(App[None]):
 
     # -- actions ----------------------------------------------------------
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # Main-screen shortcuts must never edit the library or transport while
+        # a modal owns focus (including its results table).
+        return not isinstance(self.screen, ModalScreen)
+
+    def _save_preferences(self) -> None:
+        if self._config_path is None:
+            return
+        try:
+            Preferences(self.keymap, self.player.status.volume, self._visualiser).save(
+                self._config_path
+            )
+        except OSError as exc:
+            self.notify(f"Could not save preferences: {exc}", severity="error")
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#station-table", StationTable).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#station-table", StationTable).action_cursor_down()
+
+    def action_help(self) -> None:
+        self.push_screen(HelpScreen())
+
+    def action_filter_favourites(self) -> None:
+        selected = self.selected
+        self._favourites_only = not self._favourites_only
+        self.refresh_stations()
+        if selected is not None:
+            self._select_key(selected.key)
+        if self._visible:
+            self.query_one("#station-table", StationTable).focus()
+
+    def _select_key(self, key: str) -> None:
+        keys = [s.key for s in self._visible]
+        if key in keys:
+            self.query_one("#station-table", StationTable).move_cursor(row=keys.index(key))
+
     def action_play(self) -> None:
         station = self.selected
         if station is None:
@@ -310,9 +392,7 @@ class PyodeApp(App[None]):
         self._start(station)
 
     def _start(self, station: Station) -> None:
-        keys = [s.key for s in self.library]
-        if station.key in keys:
-            self.query_one("#station-table", StationTable).move_cursor(row=keys.index(station.key))
+        self._select_key(station.key)
         self.player.play(station.url, station.name)
         self._playing_key = station.key
         # Starting a station always deserves a redraw.  Without this, retrying
@@ -344,6 +424,7 @@ class PyodeApp(App[None]):
 
     def action_volume(self, delta: int) -> None:
         self.player.adjust_volume(delta)
+        self._save_preferences()
 
     def action_toggle_favourite(self) -> None:
         station = self.selected
@@ -360,6 +441,7 @@ class PyodeApp(App[None]):
         station = self.selected
         if station is None:
             return
+        index = next(i for i, item in enumerate(self.library) if item.key == station.key)
         try:
             with self.library.editing():
                 self.library.remove(station.key)
@@ -367,14 +449,40 @@ class PyodeApp(App[None]):
             self.notify(f"Could not remove {station.name}: {exc}", severity="error")
             self.refresh_stations()
             return
+        self._removed = (station, index)
         if station.key == self._playing_key:
             self.action_stop()
         self.refresh_stations()
-        self.notify(f"Removed {station.name}.")
+        self.notify(f"Removed {station.name}. Press u to undo.")
+
+    def action_undo_remove(self) -> None:
+        if self._removed is None:
+            self.notify("Nothing to restore.")
+            return
+        station, index = self._removed
+        if self.library.find(station.key) is not None:
+            self.notify(f"{station.name} is already in your library.")
+            self._removed = None
+            return
+        try:
+            with self.library.editing():
+                self.library.add(station)
+                last = len(self.library) - 1
+                self.library.move(last, index - last)
+        except OSError as exc:
+            self.notify(f"Could not restore {station.name}: {exc}", severity="error")
+            return
+        self._removed = None
+        self.refresh_stations()
+        self._select_key(station.key)
+        if self._visible:
+            self.query_one("#station-table", StationTable).focus()
+        self.notify(f"Restored {station.name}.")
 
     def action_toggle_visualiser(self) -> None:
         self._visualiser = not self._visualiser
         self.query_one(SignalMeter).enabled = self._visualiser
+        self._save_preferences()
 
     def action_search(self) -> None:
         self.push_screen(SearchScreen(self.api, self.library), self._after_search)

@@ -1,6 +1,6 @@
 [project]
-name = "pyode"
-version = "0.1.0"
+name = "pyode-radio"
+version = "0.2.0"
 description = "Simple terminal internet radio player with a modern TUI"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -54,3 +54,6 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.uv.build-backend]
+module-name = "pyode"

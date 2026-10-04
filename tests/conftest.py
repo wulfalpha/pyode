@@ -60,3 +60,8 @@ def player() -> FakePlayer:
 def api() -> RadioBrowser:
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json=API_ROWS))
     return RadioBrowser("https://test.invalid", client=httpx.AsyncClient(transport=transport))
+
+
+@pytest.fixture(autouse=True)
+def isolated_preferences(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYODE_CONFIG_FILE", str(tmp_path / "config.toml"))

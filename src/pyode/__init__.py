@@ -4,6 +4,6 @@
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = version("pyode")
+    __version__ = version("pyode-radio")
 except PackageNotFoundError:  # running directly from an unpacked source tree
     __version__ = "0+unknown"
