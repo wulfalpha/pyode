@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Log announced track titles to `history.csv`; `t` shows the history,
+  `c` copies the current or highlighted title, and `pyode --history` prints
+  the log. `history = false` keeps it to the session.
 - Reconnect automatically, with backoff, when a playing stream drops; give up
   after five attempts and show progress in the now-playing pane.
 - When a directory station fails to start, look it up again by UUID and, if

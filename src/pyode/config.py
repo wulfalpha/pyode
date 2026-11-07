@@ -21,6 +21,7 @@ class Preferences:
     keymap: str = "standard"
     volume: int = 80
     visualiser: bool = True
+    history: bool = True  # save the track history to disk
 
     @classmethod
     def load(cls, path: Path) -> "Preferences":
@@ -29,13 +30,21 @@ class Preferences:
                 data = tomllib.load(stream)
         except FileNotFoundError:
             return cls()
-        prefs = cls(**{key: data[key] for key in ("keymap", "volume", "visualiser") if key in data})
+        prefs = cls(
+            **{
+                key: data[key]
+                for key in ("keymap", "volume", "visualiser", "history")
+                if key in data
+            }
+        )
         if prefs.keymap not in ("standard", "vim"):
             raise ValueError("keymap must be 'standard' or 'vim'")
         if type(prefs.volume) is not int or not 0 <= prefs.volume <= 100:
             raise ValueError("volume must be an integer between 0 and 100")
         if type(prefs.visualiser) is not bool:
             raise ValueError("visualiser must be true or false")
+        if type(prefs.history) is not bool:
+            raise ValueError("history must be true or false")
         return prefs
 
     def save(self, path: Path) -> None:
@@ -47,6 +56,7 @@ class Preferences:
                     f'keymap = "{self.keymap}"\n'
                     f"volume = {self.volume}\n"
                     f"visualiser = {str(self.visualiser).lower()}\n"
+                    f"history = {str(self.history).lower()}\n"
                 )
                 stream.flush()
                 os.fsync(stream.fileno())

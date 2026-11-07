@@ -237,11 +237,11 @@ ControlBar #ctl-keys {
 
 /* -- search ----------------------------------------------------------- */
 
-SearchScreen {
+SearchScreen, HistoryScreen {
     align: center middle;
 }
 
-#search-box {
+#search-box, #history-box {
     width: 80%;
     height: 80%;
     background: $shelf;
@@ -263,7 +263,7 @@ SearchScreen {
     color: $paper;
 }
 
-#search-box DataTable {
+#search-box DataTable, #history-box DataTable {
     height: 1fr;
     background: $shelf;
     color: $paper;
@@ -276,18 +276,20 @@ SearchScreen {
     scrollbar-color-active: $dial;
 }
 
-#search-box DataTable > .datatable--header {
+#search-box DataTable > .datatable--header,
+#history-box DataTable > .datatable--header {
     background: $shelf;
     color: $dial-dim;
 }
 
-#search-box DataTable > .datatable--cursor {
+#search-box DataTable > .datatable--cursor,
+#history-box DataTable > .datatable--cursor {
     background: $dial;
     color: $cabinet;
     text-style: bold;
 }
 
-#search-status {
+#search-status, #history-status {
     height: 1;
     color: $quiet;
 }

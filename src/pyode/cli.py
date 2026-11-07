@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from pyode import __version__, config, libmpv
+from pyode.history import TrackHistory
 from pyode.player import LibmpvNotFoundError, MpvPlayer, PlayerState, PlayerStatus
 from pyode.stations import SEED_STATIONS, Station, StationLibrary, default_path
 
@@ -79,6 +80,19 @@ def _print_library(library: StationLibrary) -> int:
     return 0
 
 
+def _print_history() -> int:
+    history = TrackHistory.load()
+    if not len(history):
+        print("No tracks yet. Titles are logged as stations announce them.", file=sys.stderr)
+        return 0
+    for track in history:  # oldest first, like any log
+        print(f"{track.when()}  {track.title}  ({track.station})")
+    sys.stdout.flush()
+    tracks = "track" if len(history) == 1 else "tracks"
+    print(f"\n{len(history)} recent {tracks} from {history.path}", file=sys.stderr)
+    return 0
+
+
 def _play_headless(args: argparse.Namespace) -> int:
     last = ""
 
@@ -118,6 +132,7 @@ def _run_tui(
     visualiser: bool,
     keymap: str,
     config_path: Path,
+    save_history: bool = True,
 ) -> int:
     from pyode.app import PyodeApp
 
@@ -133,6 +148,7 @@ def _run_tui(
         autoplay=autoplay,
         keymap=keymap,
         config_path=config_path,
+        save_history=save_history,
     ).run()
     return 0
 
@@ -170,6 +186,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(visualiser=None)
     parser.add_argument(
         "--list", action="store_true", dest="list_stations", help="print the library and exit"
+    )
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        dest="show_history",
+        help="print recently heard tracks and exit",
     )
     parser.add_argument(
         "--libmpv",
@@ -212,6 +234,9 @@ def main(argv: list[str] | None = None) -> int:
         print(libmpv.report())
         return 0 if libmpv.find() or _loader_finds_libmpv() else 1
 
+    if args.show_history:
+        return _print_history()
+
     if args.play:
         args.volume = args.volume if args.volume is not None else 80
         return _play_headless(args)
@@ -242,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         visualiser=args.visualiser if args.visualiser is not None else prefs.visualiser,
         keymap=args.keymap or prefs.keymap,
         config_path=config_path,
+        save_history=prefs.history,
     )
 
 

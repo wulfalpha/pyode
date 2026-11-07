@@ -904,3 +904,119 @@ async def test_an_unreadable_outside_edit_is_reported_once(app, library):
         assert len(toasts) == 1
         assert "not overwriting" in toasts[0]
         assert app.query_one("#station-table", DataTable).row_count == 3
+
+
+# -- track history ----------------------------------------------------------
+
+
+def _announce(app, player, title):
+    from dataclasses import replace
+
+    player.status = replace(
+        player.status, now_playing=replace(player.status.now_playing, title=title)
+    )
+    app._tick()
+
+
+async def test_announced_titles_are_logged_once(app, library, player):
+    from pyode.history import TrackHistory
+
+    async with app.run_test() as pilot:
+        app._timer.stop()
+        await pilot.press("p")
+        _announce(app, player, "Artist - Song")
+        app.action_toggle_mute()
+        app._tick()  # a redraw for another reason must not log it again
+        _announce(app, player, "Artist - Next")
+        titles = [(t.station, t.title) for t in app.history]
+        assert titles == [(library[0].name, "Artist - Song"), (library[0].name, "Artist - Next")]
+        assert len(TrackHistory.load()) == 2
+
+
+async def test_history_screen_lists_newest_first_and_copies(app, player, clipboard):
+    from pyode.app import HistoryScreen
+
+    async with app.run_test() as pilot:
+        app._timer.stop()
+        await pilot.press("p")
+        _announce(app, player, "First")
+        _announce(app, player, "Second")
+        await pilot.press("t")
+        assert isinstance(app.screen, HistoryScreen)
+        table = app.screen.query_one("#history", DataTable)
+        assert table.get_row_at(0)[1] == "Second"
+        await pilot.press("down", "enter")
+        assert clipboard[-1] == "First"
+        await pilot.press("up", "c")
+        assert clipboard[-1] == "Second"
+        assert app.clipboard == "Second"
+
+
+async def test_history_screen_does_not_drive_the_player(library, player, api, clipboard):
+    from pyode.app import HistoryScreen
+
+    app = PyodeApp(library=library, player=player, api=api, keymap="vim")
+    async with app.run_test() as pilot:
+        await pilot.press("t")
+        assert isinstance(app.screen, HistoryScreen)
+        await pilot.press("l", "h", "right", "left", "p", "space", "d", "f")
+        assert not player.calls
+        assert len(library) == 3
+        await pilot.press("escape")
+        assert not isinstance(app.screen, HistoryScreen)
+
+
+async def test_empty_history_says_so(app):
+    async with app.run_test() as pilot:
+        await pilot.press("t")
+        status = app.screen.query_one("#history-status", Static)
+        assert "No tracks yet" in str(status.content)
+
+
+async def test_copy_takes_the_current_title(app, player, clipboard):
+    async with app.run_test() as pilot:
+        notices = []
+        app.notify = lambda message, **kwargs: notices.append(message)
+        await pilot.press("c")
+        assert clipboard == []
+        assert "not announced" in notices[-1]
+        app._timer.stop()
+        await pilot.press("p")
+        _announce(app, player, "Artist - Song")
+        await pilot.press("c")
+        assert clipboard == ["Artist - Song"]
+        assert notices[-1] == "Copied: Artist - Song"
+
+
+async def test_a_history_write_failure_is_reported_once(library, player, api, tmp_path):
+    from pyode.history import TrackHistory
+
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("")
+    history = TrackHistory(blocker / "history.csv")
+    app = PyodeApp(library=library, player=player, api=api, history=history)
+    async with app.run_test() as pilot:
+        notices = []
+        app.notify = lambda message, **kwargs: notices.append(message)
+        app._timer.stop()
+        await pilot.press("p")
+        _announce(app, player, "One")
+        _announce(app, player, "Two")
+        assert sum("track history" in n for n in notices) == 1
+        assert [t.title for t in history] == ["One", "Two"]
+
+
+async def test_session_only_history_is_preserved_in_preferences(library, player, api, tmp_path):
+    from pyode.config import Preferences
+    from pyode.history import TrackHistory
+
+    path = tmp_path / "prefs.toml"
+    app = PyodeApp(library=library, player=player, api=api, config_path=path, save_history=False)
+    async with app.run_test() as pilot:
+        app._timer.stop()
+        await pilot.press("p")
+        _announce(app, player, "Song")
+        await pilot.press("minus")
+        assert Preferences.load(path).history is False
+        assert len(app.history) == 1
+        assert len(TrackHistory.load()) == 0
