@@ -9,6 +9,8 @@ keeps `player` safe (see its module docstring).
 
 from __future__ import annotations
 
+import contextlib
+import time
 from pathlib import Path
 
 from textual import events, work
@@ -25,10 +27,19 @@ from pyode.browser import RadioBrowser, RadioBrowserError
 from pyode.config import Preferences
 from pyode.keys import CONTROLS, bindings, help_text, table_action
 from pyode.player import MpvPlayer, PlayerState, PlayerStatus
-from pyode.stations import Station, StationLibrary
+from pyode.stations import LibraryConflictError, Station, StationLibrary
 from pyode.widgets import ControlBar, DialRule, NowPlaying, SignalMeter, TopBar
 
 TICK = 0.1  # seconds between meter samples
+LIBRARY_POLL = 2.0  # seconds between checks for outside edits to the CSV
+
+# Reconnecting after a stream drops.  Each entry is the wait before one
+# attempt, so its length is the number of attempts before giving up.
+RECONNECT_DELAYS = (1, 2, 4, 8, 15)
+# A connection that held this long counts as a recovery, and a later drop gets
+# a full set of attempts again.  Shorter than this and the station is
+# flapping, so drops keep using up the same allowance.
+STABLE_SECONDS = 30.0
 
 # Below these, a pane cannot say anything useful, so it is dropped rather than
 # squeezed into an unreadable sliver.
@@ -211,6 +222,14 @@ class PyodeApp(App[None]):
         self._last_state: PlayerState | None = None
         self._last_signature: tuple | None = None
         self._timer: Timer | None = None
+        self._library_timer: Timer | None = None
+        self._library_conflict = False
+        # Recovery state for the station that is playing.
+        self._playing_since: float | None = None
+        self._reconnect_attempt = 0
+        self._reconnect_timer: Timer | None = None
+        self._notice = ""
+        self._repair_tried = False
 
     # -- layout -----------------------------------------------------------
 
@@ -240,11 +259,14 @@ class PyodeApp(App[None]):
         self.query_one("#station-table", StationTable).focus()
         self._save_preferences()
         self._timer = self.set_interval(TICK, self._tick)
+        self._library_timer = self.set_interval(LIBRARY_POLL, self._poll_library)
         if self._autoplay is not None:
             self._start(self._autoplay)
 
     def on_station_table_resized(self, _event: StationTable.Resized) -> None:
-        self.refresh_stations()
+        # A resize can be queued during shutdown, after the table has gone.
+        with contextlib.suppress(NoMatches):
+            self.refresh_stations()
 
     def on_resize(self, event: events.Resize) -> None:
         """Drop panes that no longer have room to be legible."""
@@ -332,17 +354,146 @@ class PyodeApp(App[None]):
 
     def _apply(self, status: PlayerStatus) -> None:
         station = self._playing_station()
-        # The side panel carries the detail; a toast is what gets noticed when
-        # a station dies while you are looking at the list.
+        if status.state is PlayerState.PLAYING and self._playing_since is None:
+            self._playing_since = time.monotonic()
         if status.state is PlayerState.ERROR and self._last_state is not PlayerState.ERROR:
-            name = station.name if station else "The stream"
-            self.notify(f"{name}: {status.error}.", title="Stream failed", severity="error")
+            self._stream_failed(status, station)
         self._last_state = status.state
-        self.query_one(NowPlaying).update(status, station)
-        self.query_one(ControlBar).update(status, station)
+        reconnecting = self._reconnect_timer is not None
+        self.query_one(NowPlaying).update(status, station, self._notice)
+        self.query_one(ControlBar).update(status, station, reconnecting=reconnecting)
         self.query_one(TopBar).update(
             station_count=len(self.library), live=status.state.name == "PLAYING"
         )
+
+    # -- recovery ---------------------------------------------------------
+
+    def _stream_failed(self, status: PlayerStatus, station: Station | None) -> None:
+        """Decide what a failure means and what to do about it.
+
+        A stream that was playing and stopped has dropped, which on internet
+        radio is usually the network, so it is retried with backoff.  A stream
+        that never started is more likely a dead address; that gets reported,
+        and a directory station is looked up again in case it has moved.
+        """
+        played_for = (
+            time.monotonic() - self._playing_since if self._playing_since is not None else None
+        )
+        self._playing_since = None
+        name = station.name if station else "The stream"
+
+        if station is None:
+            self.notify(f"{name}: {status.error}.", title="Stream failed", severity="error")
+            return
+        if self._last_state is PlayerState.PAUSED:
+            # Reconnecting would start the audio the user just paused.
+            self.notify(f"{name} dropped while paused. Press space to resume.")
+            return
+
+        if played_for is not None or self._reconnect_attempt:
+            if played_for is not None and played_for >= STABLE_SECONDS:
+                self._reconnect_attempt = 0
+            if self._reconnect_attempt < len(RECONNECT_DELAYS):
+                self._schedule_reconnect(name)
+                return
+            self._reconnect_attempt = 0
+            self.notify(
+                f"{name}: {status.error}. Gave up after {len(RECONNECT_DELAYS)} attempts.",
+                title="Stream failed",
+                severity="error",
+            )
+            return
+
+        # The side panel carries the detail; a toast is what gets noticed when
+        # a station dies while you are looking at the list.
+        self.notify(f"{name}: {status.error}.", title="Stream failed", severity="error")
+        if station.stationuuid and not self._repair_tried:
+            self._repair_tried = True
+            self._repair(station)
+
+    def _schedule_reconnect(self, name: str) -> None:
+        delay = RECONNECT_DELAYS[self._reconnect_attempt]
+        self._reconnect_attempt += 1
+        total = len(RECONNECT_DELAYS)
+        self._notice = f"Connection lost. Reconnecting ({self._reconnect_attempt}/{total})…"
+        self._reconnect_timer = self.set_timer(delay, self._reconnect)
+        if self._reconnect_attempt == 1:
+            # Later attempts are counted in the side panel, not toasted.
+            self.notify(f"Lost {name}. Reconnecting in {delay}s.", severity="warning")
+
+    def _reconnect(self) -> None:
+        self._reconnect_timer = None
+        station = self._playing_station()
+        if station is not None:
+            self._start(station, user=False)
+
+    def _cancel_reconnect(self) -> None:
+        if self._reconnect_timer is not None:
+            self._reconnect_timer.stop()
+            self._reconnect_timer = None
+        self._reconnect_attempt = 0
+        self._notice = ""
+
+    @work(group="repair")
+    async def _repair(self, station: Station) -> None:
+        """Look a failed directory station up again, in case its address moved.
+
+        Station addresses go stale constantly, and the directory keeps the
+        current one under the same UUID.  If it differs from the saved address,
+        the library is updated and the station retried.
+        """
+        try:
+            found = await self.api.by_uuid(station.stationuuid)
+        except RadioBrowserError:
+            return
+        fresh = next((s for s in found if s.stationuuid == station.stationuuid), None)
+        if fresh is None or fresh.url.rstrip("/") == station.url.rstrip("/"):
+            return
+
+        changes: dict[str, object] = {"url": fresh.url}
+        if fresh.codec:
+            changes["codec"] = fresh.codec
+        if fresh.bitrate:
+            changes["bitrate"] = fresh.bitrate
+        try:
+            with self.library.editing():
+                updated = self.library.update(station.key, **changes)
+        except OSError as exc:
+            self.notify(f"Could not save the new address for {station.name}: {exc}")
+            return
+        if updated is None:
+            return  # removed while we were asking
+        self.refresh_stations()
+
+        still_failed = self.player.status.state is PlayerState.ERROR
+        if self._playing_key == station.key and still_failed:
+            self.notify(f"{station.name} has moved. Saved its new address; retrying.")
+            self._start(updated, user=False)
+        else:
+            self.notify(f"{station.name} has moved. Saved its new address.")
+
+    # -- outside edits ----------------------------------------------------
+
+    def _poll_library(self) -> None:
+        """Pick up edits made to the CSV while pyode is open."""
+        selected = self.selected
+        try:
+            changed = self.library.reload_if_changed()
+        except LibraryConflictError as exc:
+            if not self._library_conflict:
+                self._library_conflict = True
+                self.notify(str(exc), title="Station library", severity="error")
+            return
+        self._library_conflict = False
+        if not changed:
+            return
+        try:
+            self.refresh_stations()
+        except NoMatches:
+            return  # shutting down
+        if selected is not None:
+            self._select_key(selected.key)
+        self.notify(f"Reloaded {self.library.path.name}; it changed on disk.")
 
     # -- actions ----------------------------------------------------------
 
@@ -391,8 +542,23 @@ class PyodeApp(App[None]):
             return
         self._start(station)
 
-    def _start(self, station: Station) -> None:
-        self._select_key(station.key)
+    def _start(self, station: Station, *, user: bool = True) -> None:
+        """Play a station.
+
+        `user` is False for pyode's own retries: those keep the recovery state,
+        leave the cursor where the user put it, and are not reported to the
+        directory as another play.
+        """
+        if user:
+            self._cancel_reconnect()
+            self._repair_tried = False
+            self._select_key(station.key)
+        else:
+            if self._reconnect_timer is not None:
+                self._reconnect_timer.stop()
+                self._reconnect_timer = None
+            self._notice = ""
+        self._playing_since = None
         self.player.play(station.url, station.name)
         self._playing_key = station.key
         # Starting a station always deserves a redraw.  Without this, retrying
@@ -402,7 +568,7 @@ class PyodeApp(App[None]):
         self._last_signature = None
         self.query_one(SignalMeter).clear()
         self._sync_dial()
-        if station.stationuuid:
+        if user and station.stationuuid:
             self._register_click(station.stationuuid)
 
     @work
@@ -411,11 +577,18 @@ class PyodeApp(App[None]):
         await self.api.register_click(stationuuid)
 
     def action_toggle_pause(self) -> None:
+        station = self._playing_station()
+        if station is not None and self.player.status.state is PlayerState.ERROR:
+            # Nothing to resume once the stream has gone, so start it again.
+            self._start(station)
+            return
         self.player.toggle_pause()
 
     def action_stop(self) -> None:
+        self._cancel_reconnect()
         self.player.stop()
         self._playing_key = None
+        self._playing_since = None
         self.query_one(SignalMeter).clear()
         self._sync_dial()
 
@@ -425,6 +598,30 @@ class PyodeApp(App[None]):
     def action_volume(self, delta: int) -> None:
         self.player.adjust_volume(delta)
         self._save_preferences()
+
+    def action_move(self, delta: int) -> None:
+        """Shift the selected station past its visible neighbour.
+
+        With favourites filtered, the neighbour is the next favourite, which
+        may be several places away in the full library.
+        """
+        station = self.selected
+        if station is None:
+            return
+        target = self.query_one("#station-table", StationTable).cursor_row + delta
+        if not 0 <= target < len(self._visible):
+            return
+        neighbour = self._visible[target]
+        try:
+            with self.library.editing():
+                keys = [s.key for s in self.library]
+                if station.key in keys and neighbour.key in keys:
+                    index = keys.index(station.key)
+                    self.library.move(index, keys.index(neighbour.key) - index)
+        except OSError as exc:
+            self.notify(f"Could not save the new order: {exc}", severity="error")
+        self.refresh_stations()
+        self._select_key(station.key)
 
     def action_toggle_favourite(self) -> None:
         station = self.selected
@@ -441,9 +638,11 @@ class PyodeApp(App[None]):
         station = self.selected
         if station is None:
             return
-        index = next(i for i, item in enumerate(self.library) if item.key == station.key)
+        index = 0
         try:
             with self.library.editing():
+                keys = [item.key for item in self.library]
+                index = keys.index(station.key) if station.key in keys else 0
                 self.library.remove(station.key)
         except OSError as exc:
             self.notify(f"Could not remove {station.name}: {exc}", severity="error")
@@ -488,8 +687,9 @@ class PyodeApp(App[None]):
         self.push_screen(SearchScreen(self.api, self.library), self._after_search)
 
     def _after_search(self, added: int | None) -> None:
+        # Adding may also have pulled in outside edits, so refresh regardless.
+        self.refresh_stations()
         if added:
-            self.refresh_stations()
             self.notify(f"Added {added} station{'s' if added > 1 else ''}.")
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -498,8 +698,9 @@ class PyodeApp(App[None]):
 
     async def on_unmount(self) -> None:
         # The timer outlives the widgets it queries, so it has to go first.
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
+        for timer in (self._timer, self._library_timer, self._reconnect_timer):
+            if timer is not None:
+                timer.stop()
+        self._timer = self._library_timer = self._reconnect_timer = None
         self.player.close()
         await self.api.close()

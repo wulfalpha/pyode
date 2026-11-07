@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Reconnect automatically, with backoff, when a playing stream drops; give up
+  after five attempts and show progress in the now-playing pane.
+- When a directory station fails to start, look it up again by UUID and, if
+  its address has moved, save the new one and retry.
+- Pick up edits made to `stations.csv` while pyode is running, and never
+  overwrite them: changes are applied on top of the file as it is on disk, and
+  an unreadable file is left alone.
+- Reorder stations with Shift+↑/↓ (Vim: K/J).
+- Space restarts a stream that has failed.
+- Fix a crash when a resize arrives during shutdown.
+- Play SHOUTcast v1 (`ICY 200 OK`) stations again on libmpv builds with mpv
+  0.42's libcurl stream layer, such as Homebrew's, by opening http streams
+  through ffmpeg. This also makes the ffmpeg reconnect options apply again.
+
 ## 0.2.0 (unreleased)
 
 - Standardize station controls: up/down select, right plays, left stops, and

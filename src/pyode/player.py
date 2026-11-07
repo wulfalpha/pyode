@@ -197,9 +197,28 @@ class MpvPlayer:
             stream_lavf_o="reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
             **mpv_options,
         )
+        self._use_ffmpeg_http()
         self._register_observers()
         if self._meter:
             self._enable_meter()
+
+    def _use_ffmpeg_http(self) -> None:
+        """Open http(s) streams through ffmpeg rather than libcurl.
+
+        mpv 0.42 added a libcurl stream layer, and builds that include it
+        (Homebrew's among them) hand it every http URL first.  curl refuses
+        SHOUTcast v1 servers, which answer ``ICY 200 OK`` instead of an HTTP
+        status line, so those stations fail with "loading failed".  ffmpeg
+        accepts them, and the reconnect options above only apply to ffmpeg.
+
+        Builds without the curl layer do not have this option; that is fine,
+        since they already go through ffmpeg.  It is set after construction
+        because an unknown option passed to the constructor is fatal.
+        """
+        try:
+            self._mpv["curl-enabled"] = False
+        except _MPV_ERRORS:
+            log.debug("libmpv has no curl-enabled option", exc_info=True)
 
     def _enable_meter(self) -> None:
         """Insert the level-metering filter into the audio chain."""

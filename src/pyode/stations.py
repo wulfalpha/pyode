@@ -10,6 +10,12 @@ former and a hand edit can produce the latter.
 Writes are atomic.  A truncated station list is worse than a stale one, so the
 file is written to a temporary sibling, flushed to disk, and moved into place
 with ``os.replace``.
+
+Because the file is meant to be edited while pyode is open, the library
+remembers what the file looked like when it last read or wrote it.  Before
+changing anything it checks again, and if someone else has written the file
+in the meantime it reloads first, so the change lands on top of their edit
+instead of overwriting it.
 """
 
 from __future__ import annotations
@@ -50,6 +56,15 @@ FIELDNAMES = (
 # Hand-edited files will contain whatever the user felt like typing, so reading
 # is generous and writing is canonical.
 _TRUTHY = frozenset({"1", "true", "yes", "y", "t", "x", "*"})
+
+
+class LibraryConflictError(OSError):
+    """The file changed on disk and could not be read back.
+
+    Raised instead of saving, because writing would replace whatever the user
+    put there with our older copy.  It is an `OSError` so that callers already
+    handling a failed save handle this too.
+    """
 
 
 def default_path() -> Path:
@@ -228,6 +243,10 @@ class StationLibrary:
         self.path = path or default_path()
         self._stations: list[Station] = []
         self._keys: set[str] = set()
+        # The file as we last saw it.  Whatever is on disk when the library is
+        # created is the starting point, so an in-memory library pointed at an
+        # existing file does not mistake it for an outside edit.
+        self._stamp = self._disk_stamp()
         for station in stations:
             self.add(station)
 
@@ -237,7 +256,7 @@ class StationLibrary:
     def load(cls, path: Path | None = None) -> StationLibrary:
         """Read the library.  A missing file is an empty library, not an error."""
         path = path or default_path()
-        library = cls(path=path)
+        library = cls(path=path)  # records the file's stamp before reading it
         if not path.exists():
             return library
 
@@ -268,6 +287,7 @@ class StationLibrary:
                 os.fsync(fh.fileno())  # rename is only atomic if the data landed
             os.replace(tmp, self.path)
             tmp = None
+            self._stamp = self._disk_stamp()
             # Persist the directory entry as well as the file contents. Some
             # platforms do not support opening directories, so this is best effort.
             if hasattr(os, "O_DIRECTORY"):
@@ -282,9 +302,48 @@ class StationLibrary:
                 with contextlib.suppress(OSError):
                     os.unlink(tmp)
 
+    def _disk_stamp(self) -> tuple[int, int] | None:
+        try:
+            info = self.path.stat()
+        except OSError:
+            return None
+        return info.st_mtime_ns, info.st_size
+
+    def changed_on_disk(self) -> bool:
+        """Whether something else has written the file since we last synced.
+
+        A file that has disappeared does not count: the next save puts it
+        back, and an empty library is not a better guess at what was meant.
+        """
+        stamp = self._disk_stamp()
+        return stamp is not None and stamp != self._stamp
+
+    def reload_if_changed(self) -> bool:
+        """Re-read the file if it changed on disk.  Returns True if it did.
+
+        Raises `LibraryConflictError` if the new file cannot be read.  The
+        in-memory library is left alone in that case.
+        """
+        if not self.changed_on_disk():
+            return False
+        try:
+            fresh = type(self).load(self.path)
+        except (OSError, ValueError, csv.Error) as exc:
+            raise LibraryConflictError(
+                f"{self.path.name} changed on disk and could not be read ({exc}); "
+                "not overwriting it"
+            ) from exc
+        self._stations, self._keys, self._stamp = fresh._stations, fresh._keys, fresh._stamp
+        return True
+
     @contextmanager
     def editing(self) -> Iterator[StationLibrary]:
-        """Persist a group of mutations, restoring memory if the write fails."""
+        """Persist a group of mutations, restoring memory if the write fails.
+
+        Picks up outside edits first, so the mutations apply to what is
+        actually in the file now.
+        """
+        self.reload_if_changed()
         previous = list(self._stations)
         try:
             yield self
@@ -323,6 +382,21 @@ class StationLibrary:
         if target != index:
             self._stations.insert(target, self._stations.pop(index))
         return target
+
+    def update(self, key: str, **changes: object) -> Station | None:
+        """Replace fields of one station in place, returning the new record.
+
+        The station's identity cannot change this way, so ``stationuuid`` and,
+        for a station without one, ``url`` are refused.
+        """
+        for index, station in enumerate(self._stations):
+            if station.key == key:
+                updated = replace(station, **changes)
+                if updated.key != key:
+                    raise ValueError("update cannot change a station's identity")
+                self._stations[index] = updated
+                return updated
+        return None
 
     def set_favorite(self, key: str, value: bool = True) -> bool:
         """Mark or unmark a station, keeping its position in the list."""
