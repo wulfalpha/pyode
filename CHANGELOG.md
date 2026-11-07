@@ -12,6 +12,9 @@
 - Reorder stations with Shift+↑/↓ (Vim: K/J).
 - Space restarts a stream that has failed.
 - Fix a crash when a resize arrives during shutdown.
+- Play SHOUTcast v1 (`ICY 200 OK`) stations again on libmpv builds with mpv
+  0.42's libcurl stream layer, such as Homebrew's, by opening http streams
+  through ffmpeg. This also makes the ffmpeg reconnect options apply again.
 
 ## 0.2.0 (unreleased)
 

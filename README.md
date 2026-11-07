@@ -77,20 +77,22 @@ pyode searches that directory, so nothing else needs configuring. Run
 
 [winbuild]: https://github.com/zhongfly/mpv-winbuild/releases/latest
 
-#### Known limitation: legacy SHOUTcast v1 stations
+#### Legacy SHOUTcast v1 stations
 
-A handful of older stations run SHOUTcast v1 servers that reply with a bare
-`ICY 200 OK` status line instead of a standards-conformant `HTTP/1.1 200 OK`.
-The [zhongfly/mpv-winbuild][winbuild] libmpv links against libcurl for its
-HTTP handling, and curl treats that line as invalid and refuses the
-connection (`Received HTTP/0.9 when not allowed`) — so the stream fails to
-load with "loading failed" even though the URL is fine. This affects Windows
-only: builds elsewhere typically go through mpv's ffmpeg-based HTTP path,
-which tolerates the `ICY` status line.
+A handful of older stations (SLAY Radio, for one) run SHOUTcast v1 servers that
+reply with a bare `ICY 200 OK` status line instead of `HTTP/1.1 200 OK`.
+libcurl treats that as invalid (`Received HTTP/0.9 when not allowed`), while
+ffmpeg accepts it. mpv 0.42 added a libcurl stream layer that, when a build
+includes it, opens every `http://` URL first — Homebrew's mpv does — so on
+those builds such stations fail with "loading failed" even though the URL is
+fine.
 
-There is no in-app workaround; it is a property of the libmpv build in use.
-If you hit it, report the affected station upstream at
-[zhongfly/mpv-winbuild][winbuild] or try a different libmpv build.
+pyode turns that layer off (mpv's `curl-enabled` option) wherever it exists, so
+streams go through ffmpeg as they always did. Builds without it are unaffected.
+
+The [zhongfly/mpv-winbuild][winbuild] libmpv for Windows also links libcurl. If
+an ICY station still fails there, `pyode --play <url>` will show the error;
+please report it, along with the libmpv build in use.
 
 ## Station library
 
