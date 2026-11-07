@@ -182,3 +182,34 @@ def test_headless_ignores_and_preserves_preferences(monkeypatch):
     assert cli.main(["--play", "https://example.invalid/radio"]) == 0
     assert seen["volume"] == 80
     assert path.read_text() == 'keymap = "invalid"'
+
+
+def test_history_preference_reaches_the_interface(path, monkeypatch):
+    from pyode import config
+
+    config.Preferences(history=False).save(config.default_path())
+    seen = {}
+    monkeypatch.setattr(cli, "_run_tui", lambda lib, auto, **kw: seen.update(kw) or 0)
+    assert cli.main(["--stations", str(path)]) == 0
+    assert seen["save_history"] is False
+
+
+def test_history_prints_the_log_oldest_first(capsys):
+    from pyode.history import TrackHistory
+
+    history = TrackHistory()
+    history.record("Groove Salad", "Artist - First")
+    history.record("Groove Salad", "Artist - Second")
+    assert cli.main(["--history"]) == 0
+    out, err = capsys.readouterr()
+    lines = out.splitlines()
+    assert "Artist - First" in lines[0] and "(Groove Salad)" in lines[0]
+    assert "Artist - Second" in lines[1]
+    assert "2 recent tracks" in err
+
+
+def test_history_with_no_log_says_so(capsys):
+    assert cli.main(["--history"]) == 0
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "No tracks yet" in err

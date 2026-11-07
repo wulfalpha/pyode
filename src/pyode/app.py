@@ -10,6 +10,9 @@ keeps `player` safe (see its module docstring).
 from __future__ import annotations
 
 import contextlib
+import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -25,6 +28,7 @@ from textual.widgets import DataTable, Input, Label, Static
 
 from pyode.browser import RadioBrowser, RadioBrowserError
 from pyode.config import Preferences
+from pyode.history import TrackHistory
 from pyode.keys import CONTROLS, bindings, help_text, table_action
 from pyode.player import MpvPlayer, PlayerState, PlayerStatus
 from pyode.stations import LibraryConflictError, Station, StationLibrary
@@ -70,7 +74,7 @@ class NavigationTable(DataTable):
     """Handle list motions locally, leaving Input editing untouched."""
 
     def on_key(self, event: events.Key) -> None:
-        action = table_action(event.key, self.app.keymap, search=self.id == "results")
+        action = table_action(event.key, self.app.keymap, search=self.id != "station-table")
         if action is None:
             return
         event.stop()
@@ -91,6 +95,65 @@ class HelpScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="help-box"):
             yield Static(help_text(self.app.keymap))
+
+
+class HistoryScreen(ModalScreen):
+    """Recently heard tracks, newest first."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close", show=False),
+        Binding("c", "copy", "Copy", show=False),
+    ]
+
+    def __init__(self, history: TrackHistory) -> None:
+        super().__init__()
+        self._tracks = history.recent()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="history-box"):
+            yield Label("TRACK HISTORY", classes="eyebrow")
+            yield NavigationTable(id="history", cursor_type="row")
+            yield Static("", id="history-status")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#history", DataTable)
+        table.add_columns("Time", "Title", "Station")
+        for track in self._tracks:
+            table.add_row(track.when(), track.title, track.station)
+        self.query_one("#history-status", Static).update(
+            "Enter or c copies the highlighted title. Escape closes."
+            if self._tracks
+            else "No tracks yet. Titles appear here as stations announce them."
+        )
+        table.focus()
+
+    def action_copy(self) -> None:
+        row = self.query_one("#history", DataTable).cursor_row
+        if 0 <= row < len(self._tracks):
+            self.app.copy_title(self._tracks[row].title)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        event.stop()
+        self.action_copy()
+
+
+def _native_copy(text: str) -> bool:
+    """Copy with the platform's clipboard tool, if there is one."""
+    if sys.platform == "darwin":
+        candidates = [["pbcopy"]]
+    elif sys.platform == "win32":
+        candidates = [["clip"]]
+    else:
+        candidates = [["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "-ib"]]
+    for command in candidates:
+        if shutil.which(command[0]) is None:
+            continue
+        try:
+            subprocess.run(command, input=text.encode(), check=True, timeout=2)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        return True
+    return False
 
 
 class StationTable(NavigationTable):
@@ -202,9 +265,13 @@ class PyodeApp(App[None]):
         autoplay: Station | None = None,
         keymap: str = "standard",
         config_path: Path | None = None,
+        history: TrackHistory | None = None,
+        save_history: bool = True,
     ) -> None:
         super().__init__()
         self.library = library if library is not None else StationLibrary.load()
+        self.history = history if history is not None else TrackHistory.load(persist=save_history)
+        self._history_error = False
         self.player = player if player is not None else MpvPlayer()
         self.api = api if api is not None else RadioBrowser()
         self.keymap = keymap
@@ -359,12 +426,29 @@ class PyodeApp(App[None]):
         if status.state is PlayerState.ERROR and self._last_state is not PlayerState.ERROR:
             self._stream_failed(status, station)
         self._last_state = status.state
+        if station is not None and status.now_playing.title:
+            self._record(station.name, status.now_playing.title)
         reconnecting = self._reconnect_timer is not None
         self.query_one(NowPlaying).update(status, station, self._notice)
         self.query_one(ControlBar).update(status, station, reconnecting=reconnecting)
         self.query_one(TopBar).update(
             station_count=len(self.library), live=status.state.name == "PLAYING"
         )
+
+    def _record(self, station: str, title: str) -> None:
+        try:
+            self.history.record(station, title)
+        except OSError as exc:
+            if not self._history_error:  # say so once, not on every track
+                self._history_error = True
+                self.notify(f"Could not save track history: {exc}", severity="error")
+
+    def copy_title(self, title: str) -> None:
+        # OSC 52 reaches the clipboard through most terminals, even over SSH,
+        # but not macOS Terminal; the platform tool covers that locally.
+        self.copy_to_clipboard(title)
+        _native_copy(title)
+        self.notify(f"Copied: {title}")
 
     # -- recovery ---------------------------------------------------------
 
@@ -506,9 +590,9 @@ class PyodeApp(App[None]):
         if self._config_path is None:
             return
         try:
-            Preferences(self.keymap, self.player.status.volume, self._visualiser).save(
-                self._config_path
-            )
+            Preferences(
+                self.keymap, self.player.status.volume, self._visualiser, self.history.persist
+            ).save(self._config_path)
         except OSError as exc:
             self.notify(f"Could not save preferences: {exc}", severity="error")
 
@@ -520,6 +604,16 @@ class PyodeApp(App[None]):
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    def action_history(self) -> None:
+        self.push_screen(HistoryScreen(self.history))
+
+    def action_copy_title(self) -> None:
+        title = self.player.status.now_playing.title if self._playing_key else ""
+        if not title:
+            self.notify("This station has not announced a track title.")
+            return
+        self.copy_title(title)
 
     def action_filter_favourites(self) -> None:
         selected = self.selected

@@ -10,7 +10,7 @@ def test_missing_preferences_use_defaults(tmp_path):
 
 def test_preferences_round_trip(tmp_path):
     path = tmp_path / "nested/config.toml"
-    prefs = Preferences("vim", 35, False)
+    prefs = Preferences("vim", 35, False, False)
     prefs.save(path)
     assert Preferences.load(path) == prefs
 
@@ -23,6 +23,7 @@ def test_preferences_round_trip(tmp_path):
         "volume = true",
         "volume = 5.5",
         'visualiser = "false"',
+        "history = 1",
         "invalid toml",
     ],
 )
@@ -48,3 +49,9 @@ def test_failed_save_keeps_existing_preferences(tmp_path, monkeypatch):
         Preferences("vim").save(path)
     assert Preferences.load(path) == Preferences()
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_an_older_file_without_history_keeps_it_on(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('keymap = "vim"\nvolume = 40\nvisualiser = true\n')
+    assert Preferences.load(path).history is True

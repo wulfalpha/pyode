@@ -65,3 +65,18 @@ def api() -> RadioBrowser:
 @pytest.fixture(autouse=True)
 def isolated_preferences(tmp_path, monkeypatch):
     monkeypatch.setenv("PYODE_CONFIG_FILE", str(tmp_path / "config.toml"))
+
+
+@pytest.fixture(autouse=True)
+def isolated_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYODE_HISTORY_FILE", str(tmp_path / "history.csv"))
+
+
+@pytest.fixture(autouse=True)
+def clipboard(monkeypatch):
+    """Record copies instead of overwriting the developer's clipboard."""
+    import pyode.app
+
+    copied: list[str] = []
+    monkeypatch.setattr(pyode.app, "_native_copy", lambda text: copied.append(text) or True)
+    return copied

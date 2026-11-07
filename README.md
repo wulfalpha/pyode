@@ -118,6 +118,7 @@ deleting it. Reading accepts `true`/`yes`/`1`/`x`; writing is always
 pyode                          # open the interface
 pyode --station groove         # open playing the first match in your library
 pyode --list                   # print the library and exit
+pyode --history                # print recently heard tracks and exit
 pyode --libmpv                 # report where libmpv was looked for, and exit
 pyode --no-visualiser          # start with the signal meter hidden
 pyode --keymap vim              # save Vim controls (arrows remain available)
@@ -156,6 +157,8 @@ needle marks where the playing station falls in your library.
 | `u` | Undo the last removal, restoring its position |
 | `+` / `-` | Volume |
 | `m` | Mute |
+| `t` | Track history |
+| `c` | Copy the current track title |
 | `v` | Show or hide the signal meter |
 | `/` | Search the directory |
 | `?` | Show controls for the active keymap |
@@ -167,6 +170,23 @@ Vim mode adds j/k there. Text fields retain normal typing and cursor movement.
 Playback and library shortcuts apply only to the main screen. Undo lasts for
 this session and restores the station without restarting playback. Moving a
 station while favourites are shown swaps it with the neighbouring favourite.
+
+### Track history
+
+Every track title a station announces is logged with the station and the time,
+so "what was that?" has an answer. Press `t` to see the most recent first;
+Enter or `c` copies the highlighted title, and `c` on the main screen copies
+whatever is on air now. `pyode --history` prints the log for scripts.
+
+The log is a CSV file (`history.csv` in the platform's pyode data directory,
+or `PYODE_HISTORY_FILE`). pyode only appends to it and never trims it: it is
+yours to keep, edit, or delete. Set `history = false` in `config.toml` to keep
+history for the current session only, with nothing written to disk.
+
+Copying uses the terminal's clipboard support (OSC 52), which works over SSH in
+most terminals, and the local clipboard tool as well (`pbcopy`, `wl-copy`,
+`xclip`, `xsel`, or `clip`) for terminals such as macOS Terminal that lack it.
+Not every station announces titles; many send only their own name.
 
 ### When a stream fails
 
@@ -181,7 +201,7 @@ has a new one, pyode saves it to your library and tries again.
 
 ### Preferences
 
-The keymap, volume, and signal meter visibility are saved in the platform's
+The keymap, volume, signal meter visibility, and whether to save track history are saved in the platform's
 pyode configuration directory (`~/.config/pyode/config.toml` on Linux).
 Use `PYODE_CONFIG_FILE` to choose another path. For example:
 
@@ -189,6 +209,7 @@ Use `PYODE_CONFIG_FILE` to choose another path. For example:
 keymap = "vim"
 volume = 60
 visualiser = true
+history = true
 ```
 
 CLI options override saved values and are remembered when the interface opens.

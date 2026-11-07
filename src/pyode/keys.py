@@ -30,6 +30,8 @@ CONTROLS = (
     Control("m", "toggle_mute", "Mute", "m"),
     Control("plus,equals_sign", "volume(5)", "Louder", "+ / ="),
     Control("minus", "volume(-5)", "Quieter", "-"),
+    Control("t", "history", "Track history", "t"),
+    Control("c", "copy_title", "Copy track title", "c"),
     Control("v", "toggle_visualiser", "Visualiser", "v"),
     Control("slash", "search", "Search directory", "/"),
     Control("question_mark", "help", "Help", "?"),
@@ -68,6 +70,7 @@ def help_text(keymap: str) -> str:
         [
             "",
             "Search: Enter searches / adds; Tab changes focus.",
+            "History: Enter or c copies the highlighted title.",
             "j/k move through results in Vim mode. Typing edits the search.",
             "Escape closes dialogs. Playback controls apply to the main screen.",
         ]
