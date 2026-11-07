@@ -99,6 +99,12 @@ Stations live in a CSV file at `~/.config/pyode/stations.csv` (override with
 unknown columns are ignored, missing ones take defaults, and a malformed row is
 skipped rather than taking the rest of the file down with it.
 
+You can edit the file while pyode is running. pyode notices within a couple
+of seconds and reloads it, and before saving any change of its own it checks
+again, so your edit is never overwritten with an older copy. If the edited
+file cannot be read (saved in the wrong encoding, say), pyode says so and
+refuses to save over it until it is fixed.
+
 Favourites are a `favorite` column rather than a second file, so a station has
 exactly one record and marking one cannot desynchronise from renaming or
 deleting it. Reading accepts `true`/`yes`/`1`/`x`; writing is always
@@ -140,6 +146,7 @@ needle marks where the playing station falls in your library.
 | `↑` / `↓` (Vim: `k` / `j`) | Previous / next station |
 | `→` / `p` / `Enter` (Vim: `l`) | Play the selected station |
 | `space` | Pause and resume |
+| `Shift+↑` / `Shift+↓` (Vim: `K` / `J`) | Move the selected station up / down the list |
 | `←` / `s` (Vim: `h`) | Stop |
 | `f` | Favourite the selected station |
 | `F` (Shift+f) | Toggle favourites-only / all stations |
@@ -156,7 +163,19 @@ In directory search, Enter submits the query or adds the highlighted result,
 Tab changes focus, and Escape closes the dialog. Up/down work in the results;
 Vim mode adds j/k there. Text fields retain normal typing and cursor movement.
 Playback and library shortcuts apply only to the main screen. Undo lasts for
-this session and restores the station without restarting playback.
+this session and restores the station without restarting playback. Moving a
+station while favourites are shown swaps it with the neighbouring favourite.
+
+### When a stream fails
+
+If a stream that was playing drops, pyode reconnects on its own, waiting a
+little longer each time (1, 2, 4, 8, then 15 seconds) before giving up. A
+connection that holds for 30 seconds earns a fresh set of attempts. A stream
+that drops while paused waits for you to press space.
+
+If a station from the directory fails to start at all, pyode looks it up
+again by its directory ID. Station addresses change often; when the directory
+has a new one, pyode saves it to your library and tries again.
 
 ### Preferences
 

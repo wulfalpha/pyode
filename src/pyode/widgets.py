@@ -176,7 +176,8 @@ class NowPlaying(Vertical):
         yield Static("", id="np-tags")
         yield Static("", id="np-error")
 
-    def update(self, status: PlayerStatus, station: Station | None) -> None:
+    def update(self, status: PlayerStatus, station: Station | None, notice: str = "") -> None:
+        """Show the status; a `notice` (such as a pending reconnect) replaces the error."""
         now = status.now_playing
         self.query_one("#np-title", Static).update(now.display)
 
@@ -204,10 +205,13 @@ class NowPlaying(Vertical):
         self.query_one("#np-tags-label", Label).display = bool(tags)
         self.query_one("#np-tags", Static).update("  ".join(tags))
 
-        _set(
-            self.query_one("#np-error", Static),
-            f"{status.error}. Press p to try again." if status.error else "",
-        )
+        if notice:
+            message = notice
+        elif status.error:
+            message = f"{status.error}. Press p to try again."
+        else:
+            message = ""
+        _set(self.query_one("#np-error", Static), message)
 
 
 class ControlBar(Horizontal):
@@ -223,15 +227,20 @@ class ControlBar(Horizontal):
         yield Static("", id="ctl-volume")
         yield Static(footer_text(self.keymap), id="ctl-keys")
 
-    def update(self, status: PlayerStatus, station: Station | None) -> None:
+    def update(
+        self, status: PlayerStatus, station: Station | None, *, reconnecting: bool = False
+    ) -> None:
         glyph, label, css_class = TRANSPORT[status.state]
+        if reconnecting:
+            glyph, label, css_class = "◌", "Reconnecting", "paused"
         transport = self.query_one("#transport", Static)
         transport.update(f"{glyph} {label}")
         for candidate in ("live", "paused", "error"):
             transport.set_class(candidate == css_class, candidate)
 
         name = station.name if station else status.now_playing.station
-        self.query_one("#ctl-station", Static).update(name if status.is_active else "")
+        active = status.is_active or reconnecting
+        self.query_one("#ctl-station", Static).update(name if active else "")
         self.query_one("#ctl-volume", Static).update(_volume_readout(status))
 
 

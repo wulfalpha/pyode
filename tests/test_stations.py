@@ -6,11 +6,18 @@ a spreadsheet round trip can do to it.
 """
 
 import csv
+import os
 from dataclasses import replace
 
 import pytest
 
-from pyode.stations import ENV_VAR, Station, StationLibrary, default_path
+from pyode.stations import (
+    ENV_VAR,
+    LibraryConflictError,
+    Station,
+    StationLibrary,
+    default_path,
+)
 
 JAZZ = Station(
     name="Smooth Jazz",
@@ -338,3 +345,105 @@ def test_favoriting_does_not_change_identity():
     library = StationLibrary([JAZZ])
     library.toggle_favorite(JAZZ.key)
     assert library.find(JAZZ.key) is not None
+
+
+def test_update_replaces_fields_in_place():
+    other = replace(JAZZ, stationuuid="other", name="Other")
+    library = StationLibrary([JAZZ, other])
+    updated = library.update(JAZZ.key, url="https://moved.example/jazz", bitrate=128)
+    assert updated == library[0]
+    assert (library[0].url, library[0].bitrate, library[0].name) == (
+        "https://moved.example/jazz",
+        128,
+        JAZZ.name,
+    )
+    assert library[1] == other
+
+
+def test_update_refuses_to_change_identity():
+    hand_added = Station(name="Hand", url="https://e.com/hand")
+    library = StationLibrary([JAZZ, hand_added])
+    with pytest.raises(ValueError):
+        library.update(JAZZ.key, stationuuid="different")
+    with pytest.raises(ValueError):
+        library.update(hand_added.key, url="https://e.com/elsewhere")
+    assert [s.key for s in library] == [JAZZ.key, hand_added.key]
+
+
+def test_update_of_an_unknown_station_returns_none():
+    assert StationLibrary([JAZZ]).update("nope", name="x") is None
+
+
+# -- outside edits ----------------------------------------------------------
+
+
+def _edit_on_disk(path, stations):
+    """Rewrite the file as another program would, and make sure it looks newer."""
+    before = path.stat().st_mtime_ns if path.exists() else 0
+    StationLibrary(stations, path=path.with_name("scratch.csv")).save()
+    path.with_name("scratch.csv").replace(path)
+    os.utime(path, ns=(before + 10**9, before + 10**9))
+
+
+def test_our_own_save_is_not_an_outside_edit(csv_path):
+    library = StationLibrary([JAZZ], path=csv_path)
+    library.save()
+    assert not library.changed_on_disk()
+    assert library.reload_if_changed() is False
+
+
+def test_an_outside_edit_is_detected_and_reloaded(csv_path):
+    library = StationLibrary([JAZZ], path=csv_path)
+    library.save()
+    hand = Station(name="Hand Added", url="https://e.com/hand", added="2026-01-01")
+    _edit_on_disk(csv_path, [JAZZ, hand])
+    assert library.changed_on_disk()
+    assert library.reload_if_changed() is True
+    assert list(library) == [JAZZ, hand]
+    assert not library.changed_on_disk()
+
+
+def test_editing_applies_on_top_of_an_outside_edit(csv_path):
+    """Regression: a save used to overwrite whatever had been typed into the CSV."""
+    library = StationLibrary.load(csv_path)
+    with library.editing():
+        library.add(JAZZ)
+    hand = Station(name="Hand Added", url="https://e.com/hand", added="2026-01-01")
+    _edit_on_disk(csv_path, [JAZZ, hand])
+
+    with library.editing():
+        library.toggle_favorite(JAZZ.key)
+
+    on_disk = StationLibrary.load(csv_path)
+    assert [s.name for s in on_disk] == [JAZZ.name, "Hand Added"]
+    assert on_disk[0].favorite is True
+
+
+def test_an_unreadable_outside_edit_blocks_the_save(csv_path):
+    library = StationLibrary([JAZZ], path=csv_path)
+    library.save()
+    garbage = b"name,url\n\xff\xfe not utf-8\n"
+    csv_path.write_bytes(garbage)
+    os.utime(csv_path, ns=(1, 1))
+
+    with pytest.raises(LibraryConflictError), library.editing():
+        library.remove(JAZZ.key)
+
+    assert csv_path.read_bytes() == garbage
+    assert list(library) == [JAZZ]
+
+
+def test_a_deleted_file_is_not_an_outside_edit(csv_path):
+    library = StationLibrary([JAZZ], path=csv_path)
+    library.save()
+    csv_path.unlink()
+    assert library.reload_if_changed() is False
+    assert list(library) == [JAZZ]
+
+
+def test_an_in_memory_library_does_not_reload_an_existing_file(csv_path):
+    StationLibrary([JAZZ], path=csv_path).save()
+    other = Station(name="Other", url="https://e.com/other")
+    library = StationLibrary([other], path=csv_path)
+    assert library.reload_if_changed() is False
+    assert [s.name for s in library] == ["Other"]

@@ -382,6 +382,7 @@ async def test_a_failing_stream_raises_a_toast_once(app, player):
         await pilot.pause()
         toasts = []
         pilot.app.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+        pilot.app._timer.stop()  # never observed playing: a failed start, not a drop
         await pilot.press("p")
         player.status = replace(player.status, state=PlayerState.ERROR, error="loading failed")
         pilot.app._tick()
@@ -398,6 +399,7 @@ async def test_retrying_after_a_failure_can_toast_again(app, player):
         await pilot.pause()
         toasts = []
         pilot.app.notify = lambda message, **kwargs: toasts.append(message)
+        pilot.app._timer.stop()  # never observed playing: a failed start, not a drop
         await pilot.press("p")
         player.status = replace(player.status, state=PlayerState.ERROR, error="loading failed")
         pilot.app._tick()
@@ -615,3 +617,290 @@ async def test_preference_write_failure_keeps_controls_working(library, player, 
         assert not app._visualiser
         assert any("Could not save preferences" in notice for notice in notices)
         assert blocker.read_text() == "keep"
+
+
+# -- reordering -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "keymap,down,up", [("standard", "shift+down", "shift+up"), ("vim", "J", "K")]
+)
+async def test_move_reorders_and_persists(library, player, api, keymap, down, up):
+    names = [s.name for s in library]
+    app = PyodeApp(library=library, player=player, api=api, keymap=keymap)
+    async with app.run_test() as pilot:
+        await pilot.press(down)
+        assert [s.name for s in library] == [names[1], names[0], names[2]]
+        assert app.selected.name == names[0]  # the cursor follows the station
+        assert [s.name for s in StationLibrary.load(library.path)] == [s.name for s in library]
+        await pilot.press(up)
+        assert [s.name for s in library] == names
+
+
+async def test_move_stops_at_the_ends(app, library):
+    names = [s.name for s in library]
+    async with app.run_test() as pilot:
+        await pilot.press("shift+up")
+        assert [s.name for s in library] == names
+
+
+async def test_vim_move_keys_are_opt_in(app, library):
+    names = [s.name for s in library]
+    async with app.run_test() as pilot:
+        await pilot.press("J")
+        assert [s.name for s in library] == names
+
+
+async def test_move_with_favourites_shown_jumps_hidden_stations(app, library):
+    library.set_favorite(library[2].key)  # favourites are now stations 0 and 2
+    names = [s.name for s in library]
+    async with app.run_test() as pilot:
+        await pilot.press("F", "shift+down")
+        assert [s.name for s in library] == [names[1], names[2], names[0]]
+        assert app.selected.name == names[0]
+
+
+async def test_moving_the_playing_station_moves_the_needle(app):
+    async with app.run_test() as pilot:
+        await pilot.press("p", "shift+down", "shift+down")
+        assert app.query_one(DialRule).position == 1.0
+
+
+# -- recovery ---------------------------------------------------------------
+
+
+def _set_state(player, state, error=""):
+    from dataclasses import replace
+
+    player.status = replace(player.status, state=state, error=error)
+
+
+async def _drop(app, player):
+    """Play the first station, let the app see it playing, then lose it."""
+    app._timer.stop()  # drive ticks by hand
+    await app.run_action("play")
+    app._tick()  # observes PLAYING
+    _set_state(player, PlayerState.ERROR, "stream ended")
+    app._tick()
+
+
+async def test_a_dropped_stream_is_reconnected(app, library, player):
+    async with app.run_test() as pilot:
+        toasts = []
+        app.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+        await _drop(app, player)
+        assert app._reconnect_timer is not None
+        assert "Reconnecting" in toasts[-1][0]
+        assert toasts[-1][1]["severity"] == "warning"
+        assert "Reconnecting" in str(app.query_one("#transport", Static).content)
+        assert "Reconnecting" in str(app.query_one("#np-error", Static).content)
+
+        app.query_one("#station-table", DataTable).move_cursor(row=2)
+        app._reconnect_timer.stop()
+        app._reconnect()
+        await pilot.pause()
+        assert player.calls[-1] == ("play", library[0].url, library[0].name)
+        assert app.selected == library[2]  # a retry leaves the cursor alone
+        app._tick()
+        assert "Reconnecting" not in str(app.query_one("#transport", Static).content)
+
+
+async def test_reconnecting_gives_up_eventually(app, player, monkeypatch):
+    import pyode.app as app_module
+
+    monkeypatch.setattr(app_module, "RECONNECT_DELAYS", (1, 1))
+    async with app.run_test():
+        toasts = []
+        app.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+        await _drop(app, player)
+        for _ in range(2):
+            app._reconnect_timer.stop()
+            app._reconnect()
+            _set_state(player, PlayerState.ERROR, "loading failed")  # retry never starts
+            app._tick()
+        assert app._reconnect_timer is None
+        assert "Gave up" in toasts[-1][0]
+        assert toasts[-1][1]["severity"] == "error"
+        assert player.calls.count(("play", app.library[0].url, app.library[0].name)) == 3
+
+
+async def test_a_long_stable_connection_earns_fresh_attempts(app, player, monkeypatch):
+    import pyode.app as app_module
+
+    monkeypatch.setattr(app_module, "RECONNECT_DELAYS", (1,))
+    async with app.run_test():
+        await _drop(app, player)
+        app._reconnect_timer.stop()
+        app._reconnect()
+        app._tick()  # playing again
+        app._playing_since -= app_module.STABLE_SECONDS
+        _set_state(player, PlayerState.ERROR, "stream ended")
+        app._tick()
+        assert app._reconnect_timer is not None
+
+
+async def test_a_flapping_stream_uses_up_its_attempts(app, player, monkeypatch):
+    import pyode.app as app_module
+
+    monkeypatch.setattr(app_module, "RECONNECT_DELAYS", (1,))
+    async with app.run_test():
+        await _drop(app, player)
+        app._reconnect_timer.stop()
+        app._reconnect()
+        app._tick()  # plays briefly, then drops again
+        _set_state(player, PlayerState.ERROR, "stream ended")
+        app._tick()
+        assert app._reconnect_timer is None
+
+
+async def test_stop_cancels_a_pending_reconnect(app, player):
+    async with app.run_test() as pilot:
+        await _drop(app, player)
+        await pilot.press("s")
+        assert app._reconnect_timer is None
+        assert app._notice == ""
+
+
+async def test_a_stream_that_drops_while_paused_waits_for_space(app, library, player):
+    async with app.run_test() as pilot:
+        toasts = []
+        app.notify = lambda message, **kwargs: toasts.append(message)
+        app._timer.stop()
+        await pilot.press("p", "space")
+        app._tick()  # observes PAUSED
+        _set_state(player, PlayerState.ERROR, "stream ended")
+        app._tick()
+        assert app._reconnect_timer is None
+        assert "space" in toasts[-1]
+        await pilot.press("space")
+        assert player.calls[-1] == ("play", library[0].url, library[0].name)
+
+
+def _directory(rows, requests=None):
+    import httpx
+
+    from pyode.browser import RadioBrowser
+
+    def handle(request):
+        if requests is not None:
+            requests.append(request.url.path)
+        return httpx.Response(200, json=rows)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    return RadioBrowser("https://test.invalid", client=client)
+
+
+async def test_a_station_that_moved_is_repaired_and_retried(library, player):
+    first = library[0]
+    moved = {
+        "stationuuid": first.stationuuid,
+        "name": "Whatever the directory calls it",
+        "url_resolved": "https://new.example/stream",
+        "codec": "AAC",
+        "bitrate": 64,
+    }
+    app = PyodeApp(library=library, player=player, api=_directory([moved]))
+    async with app.run_test() as pilot:
+        app._timer.stop()
+        await pilot.press("p")
+        _set_state(player, PlayerState.ERROR, "loading failed")
+        app._tick()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        repaired = library.find(first.key)
+        assert (repaired.url, repaired.codec, repaired.bitrate) == (
+            "https://new.example/stream",
+            "AAC",
+            64,
+        )
+        assert repaired.name == first.name  # the user's name is kept
+        assert StationLibrary.load(library.path).find(first.key).url == repaired.url
+        assert player.calls[-1] == ("play", "https://new.example/stream", first.name)
+
+
+async def test_a_station_at_the_same_address_is_left_alone(library, player):
+    first = library[0]
+    same = {"stationuuid": first.stationuuid, "name": "x", "url_resolved": first.url}
+    app = PyodeApp(library=library, player=player, api=_directory([same]))
+    async with app.run_test() as pilot:
+        toasts = []
+        app.notify = lambda message, **kwargs: toasts.append(message)
+        app._timer.stop()
+        await pilot.press("p")
+        _set_state(player, PlayerState.ERROR, "loading failed")
+        app._tick()
+        await app.workers.wait_for_complete()
+        assert library.find(first.key) == first
+        assert [c[0] for c in player.calls] == ["play"]
+        assert len(toasts) == 1  # just the failure
+
+
+async def test_repair_is_tried_once_per_play(library, player):
+    first = library[0]
+    requests = []
+    same = {"stationuuid": first.stationuuid, "name": "x", "url_resolved": first.url}
+    app = PyodeApp(library=library, player=player, api=_directory([same], requests))
+    async with app.run_test() as pilot:
+        app._timer.stop()
+        await pilot.press("p")
+        for _ in range(2):
+            _set_state(player, PlayerState.ERROR, "loading failed")
+            app._tick()
+            _set_state(player, PlayerState.BUFFERING)
+            app._tick()
+        await app.workers.wait_for_complete()
+        assert requests.count("/json/stations/byuuid") == 1
+
+
+async def test_retries_are_not_reported_to_the_directory_as_plays(library, player):
+    requests = []
+    app = PyodeApp(library=library, player=player, api=_directory([], requests))
+    async with app.run_test():
+        await _drop(app, player)
+        app._reconnect_timer.stop()
+        app._reconnect()
+        await app.workers.wait_for_complete()
+        assert sum(path.startswith("/json/url/") for path in requests) == 1
+
+
+# -- outside edits ----------------------------------------------------------
+
+
+async def test_outside_edits_appear_in_the_list(app, library):
+    import os
+
+    from pyode.stations import Station
+
+    library.save()
+    async with app.run_test() as pilot:
+        await pilot.press("down")
+        selected = app.selected
+        edited = StationLibrary(
+            [Station(name="Typed In", url="https://e.com/typed"), *library],
+            path=library.path.with_name("other.csv"),
+        )
+        edited.save()
+        edited.path.replace(library.path)
+        os.utime(library.path, ns=(1, 1))
+
+        app._poll_library()
+        assert app.query_one("#station-table", DataTable).row_count == 4
+        assert library[0].name == "Typed In"
+        assert app.selected == selected  # same station, now one row lower
+
+
+async def test_an_unreadable_outside_edit_is_reported_once(app, library):
+    import os
+
+    library.save()
+    async with app.run_test():
+        toasts = []
+        app.notify = lambda message, **kwargs: toasts.append(message)
+        library.path.write_bytes(b"name,url\n\xff\xfe\n")
+        os.utime(library.path, ns=(1, 1))
+        app._poll_library()
+        app._poll_library()
+        assert len(toasts) == 1
+        assert "not overwriting" in toasts[0]
+        assert app.query_one("#station-table", DataTable).row_count == 3

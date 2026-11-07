@@ -21,6 +21,8 @@ CONTROLS = (
     Control("right,enter,p", "play", "Play", "→ / Enter / p", "l"),
     Control("left,s", "stop", "Stop", "← / s", "h"),
     Control("space", "toggle_pause", "Pause / resume", "Space"),
+    Control("shift+up", "move(-1)", "Move station up", "Shift+↑", "K"),
+    Control("shift+down", "move(1)", "Move station down", "Shift+↓", "J"),
     Control("f", "toggle_favourite", "Favourite", "f"),
     Control("F", "filter_favourites", "Favourites only / all", "F"),
     Control("d", "remove", "Remove", "d"),
@@ -35,6 +37,10 @@ CONTROLS = (
 )
 
 
+# Handled by the focused table itself; see `bindings`.
+TABLE_ACTIONS = ("cursor_up", "cursor_down", "play", "stop")
+
+
 def bindings() -> list[Binding]:
     # Table navigation and activation are handled at the focused table so
     # DataTable's own arrow bindings cannot swallow transport controls.
@@ -42,7 +48,9 @@ def bindings() -> list[Binding]:
 
 
 def table_action(key: str, keymap: str, *, search: bool = False) -> str | None:
-    for control in CONTROLS[:4]:
+    for control in CONTROLS:
+        if control.action not in TABLE_ACTIONS:
+            continue
         keys = control.keys.split(",") + ([control.vim] if keymap == "vim" else [])
         if key in keys:
             if search and control.action in ("play", "stop"):
