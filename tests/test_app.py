@@ -1020,3 +1020,101 @@ async def test_session_only_history_is_preserved_in_preferences(library, player,
         assert Preferences.load(path).history is False
         assert len(app.history) == 1
         assert len(TrackHistory.load()) == 0
+
+
+# -- retry hint ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("keymap,key", [("standard", "→"), ("vim", "l")])
+async def test_retry_hint_names_the_play_key_for_the_keymap(library, player, api, keymap, key):
+    app = PyodeApp(library=library, player=player, api=api, keymap=keymap)
+    async with app.run_test() as pilot:
+        app._timer.stop()
+        await pilot.press("enter")
+        _set_state(player, PlayerState.ERROR, "loading failed")
+        app._tick()
+        hint = str(app.query_one("#np-error", Static).content)
+        assert hint == f"loading failed. Press {key} to try again."
+
+
+# -- volume saves -------------------------------------------------------------
+
+
+def _count_saves(monkeypatch):
+    from pyode.config import Preferences
+
+    saved = []
+    original = Preferences.save
+
+    def save(self, path):
+        saved.append(self.volume)
+        original(self, path)
+
+    monkeypatch.setattr(Preferences, "save", save)
+    return saved
+
+
+async def test_held_volume_keys_do_not_write_on_every_press(
+    library, player, api, tmp_path, monkeypatch
+):
+    import pyode.app as app_module
+
+    monkeypatch.setattr(app_module, "VOLUME_SAVE_DELAY", 60)
+    app = PyodeApp(library=library, player=player, api=api, config_path=tmp_path / "p.toml")
+    async with app.run_test() as pilot:
+        saved = _count_saves(monkeypatch)
+        for _ in range(6):
+            await pilot.press("minus")
+        assert player.status.volume == 70  # the player follows every press
+        assert saved == []
+        assert app._volume_save_timer is not None
+
+
+async def test_a_volume_change_is_saved_once_the_keys_settle(
+    library, player, api, tmp_path, monkeypatch
+):
+    import pyode.app as app_module
+    from pyode.config import Preferences
+
+    monkeypatch.setattr(app_module, "VOLUME_SAVE_DELAY", 0.05)
+    path = tmp_path / "prefs.toml"
+    app = PyodeApp(library=library, player=player, api=api, config_path=path)
+    async with app.run_test() as pilot:
+        saved = _count_saves(monkeypatch)
+        await pilot.press("minus")
+        await pilot.pause(0.3)
+        assert saved == [95]
+        assert Preferences.load(path).volume == 95
+        assert app._volume_save_timer is None
+
+
+async def test_quitting_straight_after_a_volume_change_keeps_it(
+    library, player, api, tmp_path, monkeypatch
+):
+    import pyode.app as app_module
+    from pyode.config import Preferences
+
+    monkeypatch.setattr(app_module, "VOLUME_SAVE_DELAY", 60)
+    path = tmp_path / "prefs.toml"
+    app = PyodeApp(library=library, player=player, api=api, config_path=path)
+    async with app.run_test() as pilot:
+        await pilot.press("minus", "minus")
+        assert Preferences.load(path).volume == 100  # still waiting
+    assert Preferences.load(path).volume == 90
+
+
+async def test_another_preference_save_takes_the_pending_volume_with_it(
+    library, player, api, tmp_path, monkeypatch
+):
+    import pyode.app as app_module
+    from pyode.config import Preferences
+
+    monkeypatch.setattr(app_module, "VOLUME_SAVE_DELAY", 60)
+    path = tmp_path / "prefs.toml"
+    app = PyodeApp(library=library, player=player, api=api, config_path=path)
+    async with app.run_test() as pilot:
+        saved = _count_saves(monkeypatch)
+        await pilot.press("minus", "v")
+        assert saved == [95]
+        assert app._volume_save_timer is None
+        assert Preferences.load(path) == Preferences("standard", 95, False)

@@ -78,11 +78,16 @@ def help_text(keymap: str) -> str:
     return "\n".join(lines)
 
 
+def key_for(action: str, keymap: str) -> str:
+    """The key to show for an action: the Vim key in Vim mode, else the main one."""
+    control = next(c for c in CONTROLS if c.action == action)
+    return control.vim if keymap == "vim" and control.vim else control.display.split(" / ")[0]
+
+
 def footer_text(keymap: str) -> str:
     actions = ("play", "stop", "toggle_pause", "help")
     return " · ".join(
-        f"{c.vim if keymap == 'vim' and c.vim else c.display.split(' / ')[0]} "
-        f"{c.label.split(' / ')[0].lower()}"
+        f"{key_for(c.action, keymap)} {c.label.split(' / ')[0].lower()}"
         for c in CONTROLS
         if c.action in actions
     )

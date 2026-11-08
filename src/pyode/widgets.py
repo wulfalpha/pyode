@@ -18,7 +18,7 @@ from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Label, Static
 
-from pyode.keys import footer_text
+from pyode.keys import footer_text, key_for
 from pyode.player import PlayerState, PlayerStatus
 from pyode.stations import Station
 
@@ -167,6 +167,10 @@ class SignalMeter(Widget):
 class NowPlaying(Vertical):
     """Everything known about what is currently on air."""
 
+    def __init__(self, *, keymap: str = "standard", **kwargs):
+        super().__init__(**kwargs)
+        self.keymap = keymap
+
     def compose(self):
         yield Label("NOW PLAYING", classes="eyebrow")
         yield Static("Nothing playing", id="np-title")
@@ -208,7 +212,7 @@ class NowPlaying(Vertical):
         if notice:
             message = notice
         elif status.error:
-            message = f"{status.error}. Press p to try again."
+            message = f"{status.error}. Press {key_for('play', self.keymap)} to try again."
         else:
             message = ""
         _set(self.query_one("#np-error", Static), message)
