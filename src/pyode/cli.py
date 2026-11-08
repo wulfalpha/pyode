@@ -66,13 +66,8 @@ def _print_library(library: StationLibrary) -> int:
         return 0
     width = max(len(station.name) for station in library)
     for station in library:
-        quality = " ".join(
-            part
-            for part in (station.codec.upper(), f"{station.bitrate}k" if station.bitrate else "")
-            if part
-        )
         mark = "*" if station.favorite else " "
-        print(f"{mark} {station.name:<{width}}  {quality:<10}  {station.country}")
+        print(f"{mark} {station.name:<{width}}  {station.quality:<10}  {station.country}")
     # The summary goes to stderr so `pyode --list` stays pipe-clean, but stdout
     # has to be flushed first or the two streams interleave out of order.
     sys.stdout.flush()

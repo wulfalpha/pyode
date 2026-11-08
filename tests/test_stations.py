@@ -447,3 +447,46 @@ def test_an_in_memory_library_does_not_reload_an_existing_file(csv_path):
     library = StationLibrary([other], path=csv_path)
     assert library.reload_if_changed() is False
     assert [s.name for s in library] == ["Other"]
+
+
+# -- quality ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "codec,bitrate,url,expected",
+    [
+        ("mp3", 128, "https://e.com/live.mp3", "MP3 128k"),
+        ("AAC+", None, "https://e.com/live", "AAC+"),
+        ("", 64, "https://e.com/live", "64k"),
+        ("", None, "https://e.com/live", ""),
+        ("", None, "https://cdn.e.com/1fm_192_2.m3u8?Policy=abc&Signature=xyz", "HLS"),
+        ("", 192, "https://cdn.e.com/LIVE.M3U8", "HLS 192k"),
+        ("AAC", None, "https://cdn.e.com/live.m3u8", "AAC"),  # a known codec wins
+        ("", None, "https://e.com/m3u8/stream", ""),  # only the file name counts
+    ],
+)
+def test_quality(codec, bitrate, url, expected):
+    assert Station(name="S", url=url, codec=codec, bitrate=bitrate).quality == expected
+
+
+@pytest.mark.parametrize("value", ["UNKNOWN", "unknown", " Unknown "])
+def test_an_unknown_codec_in_the_csv_is_read_as_blank(csv_path, value):
+    csv_path.write_text(f"name,url,codec\nkbs,https://e.com/live.m3u8,{value}\n")
+    station = StationLibrary.load(csv_path)[0]
+    assert station.codec == ""
+    assert station.quality == "HLS"
+
+
+def test_an_unknown_codec_is_not_written_back(csv_path):
+    csv_path.write_text("name,url,codec\nkbs,https://e.com/live.m3u8,UNKNOWN\n")
+    library = StationLibrary.load(csv_path)
+    library.save()
+    assert "UNKNOWN" not in csv_path.read_text()
+
+
+def test_an_unknown_codec_from_the_directory_is_blank():
+    station = Station.from_api(
+        {"name": "kbs", "url_resolved": "https://e.com/1fm.m3u8", "codec": "UNKNOWN"}
+    )
+    assert station.codec == ""
+    assert station.quality == "HLS"

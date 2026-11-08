@@ -30,6 +30,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from platformdirs import user_config_path
 
@@ -65,6 +66,17 @@ class LibraryConflictError(OSError):
     put there with our older copy.  It is an `OSError` so that callers already
     handling a failed save handle this too.
     """
+
+
+def _codec(value: str) -> str:
+    """Normalise a codec name, dropping the directory's "UNKNOWN" placeholder.
+
+    radio-browser reports UNKNOWN when its checker could not tell, which is
+    nearly always an HLS stream.  It says nothing useful, so it is stored as
+    blank and `Station.quality` fills the gap where it can.
+    """
+    value = value.strip()
+    return "" if value.casefold() == "unknown" else value
 
 
 def default_path() -> Path:
@@ -103,6 +115,19 @@ class Station:
         return self.stationuuid or self.url.strip().rstrip("/")
 
     @property
+    def quality(self) -> str:
+        """Codec and bitrate for display, such as "MP3 128k".
+
+        Without a codec, an HLS playlist address is still worth naming: the
+        directory cannot report a codec for those, but HLS says what it is.
+        """
+        codec = self.codec.upper()
+        if not codec and urlsplit(self.url).path.lower().endswith(".m3u8"):
+            codec = "HLS"
+        bitrate = f"{self.bitrate}k" if self.bitrate else ""
+        return " ".join(part for part in (codec, bitrate) if part)
+
+    @property
     def tag_list(self) -> list[str]:
         return [t.strip() for t in self.tags.split(",") if t.strip()]
 
@@ -137,7 +162,7 @@ class Station:
             name=name,
             url=url,
             stationuuid=get("stationuuid"),
-            codec=get("codec"),
+            codec=_codec(get("codec")),
             bitrate=int(bitrate) if bitrate.isdigit() else None,
             country=get("country"),
             tags=get("tags"),
@@ -160,7 +185,7 @@ class Station:
             name=get("name") or "(unnamed)",
             url=get("url_resolved") or get("url"),
             stationuuid=get("stationuuid"),
-            codec=get("codec"),
+            codec=_codec(get("codec")),
             bitrate=int(bitrate) if isinstance(bitrate, int) and bitrate > 0 else None,
             country=get("country"),
             tags=get("tags"),
