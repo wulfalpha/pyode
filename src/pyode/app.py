@@ -58,11 +58,6 @@ NARROW_WIDTH = 68
 SHORT_HEIGHT = 20
 
 
-def _quality(station: Station) -> str:
-    parts = (station.codec.upper(), f"{station.bitrate}k" if station.bitrate else "")
-    return " ".join(part for part in parts if part)
-
-
 def _row(station: Station, width: int) -> str:
     """Lay a station out as one fixed-width line.
 
@@ -70,7 +65,7 @@ def _row(station: Station, width: int) -> str:
     growing the table past its pane and summoning a scrollbar.
     """
     mark = "♥ " if station.favorite else "  "
-    quality = _quality(station)
+    quality = station.quality
     room = max(4, width - len(mark) - len(quality) - 1)
     name = station.name if len(station.name) <= room else f"{station.name[: room - 1]}…"
     gap = max(1, width - len(mark) - len(name) - len(quality))
@@ -256,7 +251,7 @@ class SearchScreen(ModalScreen[int]):
         elif level.kind == "stations":
             table.add_columns("Station", "Country", "Quality")
             for station in level.items:
-                table.add_row(station.name, station.country, _quality(station))
+                table.add_row(station.name, station.country, station.quality)
             hint = "Space listens, Enter adds. Escape goes back."
             if not level.items:
                 hint = "Nothing found. Escape goes back."

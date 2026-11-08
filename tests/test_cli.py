@@ -213,3 +213,11 @@ def test_history_with_no_log_says_so(capsys):
     out, err = capsys.readouterr()
     assert out == ""
     assert "No tracks yet" in err
+
+
+def test_list_shows_hls_rather_than_unknown(path, capsys):
+    path.write_text("name,url,codec\nkbs,https://e.com/1fm.m3u8,UNKNOWN\n")
+    assert cli.main(["--stations", str(path), "--list"]) == 0
+    out = capsys.readouterr().out
+    assert "HLS" in out
+    assert "UNKNOWN" not in out
