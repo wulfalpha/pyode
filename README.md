@@ -34,9 +34,9 @@ is an unrelated physics library. Both installers create the `pyode` command auto
 source checkout is needed. If uv's tool directory is not on PATH, run
 `uv tool update-shell` and restart your shell.
 
-For an unreleased checkout, use `uv tool install .` or `pip install .`.
-The 0.3.0 changes described here become available by package name after the
-release is published to PyPI. libmpv remains a separately installed native dependency.
+To run unreleased changes, install from a checkout with `uv tool install .` or
+`pip install .`. Either way, libmpv remains a separately installed native
+dependency.
 
 ## Requirements
 
