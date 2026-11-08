@@ -17,6 +17,9 @@
 - Stations the directory marks with codec "UNKNOWN" no longer show it:
   HLS streams (`.m3u8`) show "HLS", and others show no codec. The
   placeholder is dropped from the library on the next save.
+- A station removed from `stations.csv` by an outside edit while it plays
+  keeps playing as before: its titles are still logged and a dropped stream
+  is still reconnected.
 - The "try again" hint after a stream fails names the play key for the
   active keymap (`l` in Vim mode, `→` otherwise), as the footer does.
 - Holding the volume keys no longer writes `config.toml` on every press; the
