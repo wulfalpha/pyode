@@ -287,3 +287,14 @@ async def test_an_injected_client_is_left_open():
         pass
     assert not client.is_closed
     await client.aclose()
+
+
+async def test_exact_tag_matching_is_opt_in():
+    api, seen = make_api([])
+    await api.search(tag="rock")
+    await api.search(tag="rock", tag_exact=True)
+    await api.search(name="rock", tag_exact=True)  # no tag to make exact
+    queries = [dict(request.url.params) for request in seen]
+    assert "tagExact" not in queries[0]
+    assert queries[1]["tagExact"] == "true"
+    assert "tagExact" not in queries[2]

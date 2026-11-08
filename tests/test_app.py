@@ -212,9 +212,9 @@ async def test_search_adds_a_station_to_the_library(app, library):
         screen._search("jazz")
         for _ in range(40):
             await pilot.pause()
-            if screen._results:
+            if screen._level.kind == "stations":
                 break
-        assert screen._results
+        assert screen._level.items
 
         before = len(library)
         screen.query_one("#results", DataTable).move_cursor(row=0)
@@ -233,7 +233,7 @@ async def test_search_reports_a_duplicate_instead_of_adding_twice(app, library):
         screen._search("jazz")
         for _ in range(40):
             await pilot.pause()
-            if screen._results:
+            if screen._level.kind == "stations":
                 break
         screen.query_one("#results", DataTable).move_cursor(row=0)
         await pilot.press("enter")
@@ -500,10 +500,10 @@ async def test_search_typing_and_results_do_not_control_player(library, player, 
         await pilot.press("slash", "h", "j", "k", "l", "space", "d", "f", "q")
         screen = app.screen
         assert screen.query_one(Input).value == "hjkl dfq"
+        from pyode.app import _Level
+
         table = screen.query_one("#results", DataTable)
-        screen._results = list(library)
-        for station in library:
-            table.add_row(station.name, station.country, "")
+        screen._open(_Level("Test", "stations", list(library)))
         table.focus()
         await pilot.press("j", "j", "k")
         assert table.cursor_row == 1
@@ -511,6 +511,9 @@ async def test_search_typing_and_results_do_not_control_player(library, player, 
         assert not player.calls
         assert len(library) == 3
         assert library[0].favorite
+        await pilot.press("escape")  # back to the menu, still in the dialog
+        assert screen._level.kind == "menu"
+        assert not player.calls
         await pilot.press("escape", "l")
         assert player.calls[0][0] == "play"
 
@@ -1118,3 +1121,175 @@ async def test_another_preference_save_takes_the_pending_volume_with_it(
         assert saved == [95]
         assert app._volume_save_timer is None
         assert Preferences.load(path) == Preferences("standard", 95, False)
+
+
+# -- browsing the directory -----------------------------------------------------
+
+
+def _row_for(name, uuid):
+    return {"stationuuid": uuid, "name": name, "url_resolved": f"https://stream/{uuid}"}
+
+
+class FakeDirectory:
+    """Answers each radio-browser endpoint with its own canned rows."""
+
+    def __init__(self, fail=()):
+        self.requests = []
+        self.fail = set(fail)
+
+    def __call__(self, request):
+        import httpx
+
+        path, params = request.url.path, dict(request.url.params)
+        self.requests.append((path, params))
+        if any(path.startswith(prefix) for prefix in self.fail):
+            return httpx.Response(503)
+        if path.startswith("/json/stations/topclick/"):
+            return httpx.Response(200, json=[_row_for("Popular One", "p1")])
+        if path.startswith("/json/stations/topvote/"):
+            return httpx.Response(200, json=[_row_for("Voted One", "v1")])
+        if path == "/json/tags":
+            return httpx.Response(
+                200,
+                json=[{"name": "jazz", "stationcount": 900}, {"name": "rock", "stationcount": 800}],
+            )
+        if path == "/json/countries":
+            return httpx.Response(
+                200,
+                json=[
+                    {"name": "sweden", "iso_3166_1": "SE", "stationcount": 300},
+                    {"name": "Austria", "iso_3166_1": "AT", "stationcount": 200},
+                    {"name": "Nowhere", "iso_3166_1": "", "stationcount": 5},
+                    {"name": "Empty", "iso_3166_1": "XX", "stationcount": 0},
+                ],
+            )
+        if path == "/json/stations/search":
+            name = params.get("tag") or params.get("countrycode") or params.get("name")
+            return httpx.Response(200, json=[_row_for(f"{name} station", f"s-{name}")])
+        return httpx.Response(200, json=[])
+
+    def api(self):
+        import httpx
+
+        from pyode.browser import RadioBrowser
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(self))
+        return RadioBrowser("https://test.invalid", client=client)
+
+
+async def _open_directory(pilot):
+    await pilot.press("slash")
+    await pilot.pause()
+    return pilot.app.screen
+
+
+async def _settle(pilot, screen):
+    await screen.workers.wait_for_complete()
+    await pilot.pause()
+
+
+def _rows(screen):
+    table = screen.query_one("#results", DataTable)
+    return [table.get_row_at(index)[0] for index in range(table.row_count)]
+
+
+async def test_the_directory_opens_on_the_browse_menu(app):
+    async with app.run_test() as pilot:
+        screen = await _open_directory(pilot)
+        assert _rows(screen) == ["Popular stations", "Top voted", "By genre…", "By country…"]
+        assert screen.focused is screen.query_one(Input)
+        await pilot.press("down")  # into the list, as in a menu
+        assert screen.focused is screen.query_one("#results", DataTable)
+
+
+@pytest.mark.parametrize("row,expected", [(0, "Popular One"), (1, "Voted One")])
+async def test_popular_and_top_voted_lists_can_be_added_from(library, player, row, expected):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        screen = await _open_directory(pilot)
+        await pilot.press("down", *(["down"] * row), "enter")
+        await _settle(pilot, screen)
+        assert _rows(screen) == [expected]
+        await pilot.press("enter")
+        assert library[-1].name == expected
+        await pilot.press("escape", "escape")
+        assert not isinstance(app.screen, SearchScreen)
+        assert app.query_one("#station-table", DataTable).row_count == 4
+
+
+async def test_browsing_by_genre_matches_the_tag_exactly(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        screen = await _open_directory(pilot)
+        await pilot.press("down", "down", "down", "enter")
+        await _settle(pilot, screen)
+        assert _rows(screen) == ["jazz", "rock"]
+        await pilot.press("down", "enter")
+        await _settle(pilot, screen)
+        assert _rows(screen) == ["rock station"]
+        path, params = directory.requests[-1]
+        assert (path, params["tag"], params["tagExact"]) == (
+            "/json/stations/search",
+            "rock",
+            "true",
+        )
+
+
+async def test_countries_are_alphabetical_and_searched_by_code(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        screen = await _open_directory(pilot)
+        await pilot.press("down", *(["down"] * 3), "enter")
+        await _settle(pilot, screen)
+        # No code to search by, or no stations: left out.
+        assert _rows(screen) == ["Austria", "sweden"]
+        await pilot.press("down", "enter")
+        await _settle(pilot, screen)
+        assert directory.requests[-1][1]["countrycode"] == "SE"
+
+
+async def test_escape_goes_back_a_level_and_keeps_the_place(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        screen = await _open_directory(pilot)
+        await pilot.press("down", "down", "down", "enter")  # genres
+        await _settle(pilot, screen)
+        await pilot.press("down", "enter")  # rock
+        await _settle(pilot, screen)
+        await pilot.press("escape")
+        assert screen._level.kind == "tags"
+        assert screen.query_one("#results", DataTable).cursor_row == 1  # still on rock
+        await pilot.press("escape")
+        assert screen._level.kind == "menu"
+        assert screen.query_one("#results", DataTable).cursor_row == 2  # still on genres
+        assert isinstance(app.screen, SearchScreen)
+
+
+async def test_a_failed_list_stays_put_and_says_why(library, player):
+    directory = FakeDirectory(fail=["/json/tags"])
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        screen = await _open_directory(pilot)
+        await pilot.press("down", "down", "down", "enter")
+        await _settle(pilot, screen)
+        assert screen._level.kind == "menu"
+        assert "503" in str(screen.query_one("#search-status", Static).content)
+
+
+async def test_a_search_from_deep_in_a_list_backs_out_to_the_menu(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        screen = await _open_directory(pilot)
+        await pilot.press("down", "down", "down", "enter")  # genres
+        await _settle(pilot, screen)
+        screen.query_one(Input).focus()
+        await pilot.press(*"soma", "enter")
+        await _settle(pilot, screen)
+        assert _rows(screen) == ["soma station"]
+        await pilot.press("escape")
+        assert screen._level.kind == "menu"

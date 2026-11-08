@@ -185,6 +185,7 @@ class RadioBrowser:
         *,
         name: str | None = None,
         tag: str | None = None,
+        tag_exact: bool = False,
         country_code: str | None = None,
         language: str | None = None,
         limit: int = 50,
@@ -193,12 +194,17 @@ class RadioBrowser:
         reverse: bool = True,
         hide_broken: bool = True,
     ) -> list[Station]:
-        """Search the directory.  With no criteria, returns the most popular."""
+        """Search the directory.  With no criteria, returns the most popular.
+
+        `tag` matches as a substring ("rock" finds "rockabilly") unless
+        `tag_exact` is set, which browsing by genre wants.
+        """
         return await self._stations(
             "/json/stations/search",
             _params(
                 name=name,
                 tag=tag,
+                tagExact=True if tag and tag_exact else None,
                 countrycode=country_code.upper() if country_code else None,
                 language=language,
                 limit=limit,
