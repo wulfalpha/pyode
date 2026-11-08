@@ -166,7 +166,10 @@ needle marks where the playing station falls in your library.
 
 The directory dialog opens on a short menu: popular stations, top voted, by
 genre, and by country. Enter opens a list or adds the highlighted station, and
-Escape goes back one level before it closes the dialog. Typing a name or tag
+Escape goes back one level before it closes the dialog. Space plays the
+highlighted station so you can hear it first; Space again stops it. When the
+dialog closes, a station you added keeps playing, and otherwise pyode goes back
+to whatever was playing before. Typing a name or tag
 and pressing Enter searches instead. Down or Tab moves from the search box into
 the list; up/down work there, and Vim mode adds j/k. Text fields retain normal
 typing and cursor movement.
