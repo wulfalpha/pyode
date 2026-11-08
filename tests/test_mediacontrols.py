@@ -46,9 +46,9 @@ def test_buffering_still_shows_the_station():
 
 
 def test_disabled_or_unsupported_platforms_get_a_null_session(monkeypatch):
-    commands = mediacontrols.Commands(*(lambda: None,) * 6)
+    commands = mediacontrols.Commands(*(lambda *_: None,) * 7)
     assert isinstance(real_create(commands, enabled=False), mediacontrols.NullSession)
-    monkeypatch.setattr(mediacontrols.sys, "platform", "linux")
+    monkeypatch.setattr(mediacontrols.sys, "platform", "win32")
     assert isinstance(real_create(commands), mediacontrols.NullSession)
 
 
@@ -144,3 +144,11 @@ async def test_media_keys_can_be_turned_off(library, player, api, media):
     async with app.run_test():
         pass
     assert media == []
+
+
+async def test_volume_from_the_system_reaches_the_player(app, player, media):
+    async with app.run_test() as pilot:
+        media[0].press("set_volume", 35)
+        await pilot.pause(0.2)
+        assert player.status.volume == 35
+        assert media[0].volume == 35
