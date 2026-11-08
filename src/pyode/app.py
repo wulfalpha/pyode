@@ -10,6 +10,7 @@ keeps `player` safe (see its module docstring).
 from __future__ import annotations
 
 import contextlib
+import logging
 import shutil
 import subprocess
 import sys
@@ -34,7 +35,12 @@ from pyode.player import MpvPlayer, PlayerState, PlayerStatus
 from pyode.stations import LibraryConflictError, Station, StationLibrary
 from pyode.widgets import ControlBar, DialRule, NowPlaying, SignalMeter, TopBar
 
+log = logging.getLogger(__name__)
+
 TICK = 0.1  # seconds between meter samples
+# Holding + or - repeats the key many times a second; the volume follows every
+# press, but the preferences file is written once the keys have settled.
+VOLUME_SAVE_DELAY = 0.5
 LIBRARY_POLL = 2.0  # seconds between checks for outside edits to the CSV
 
 # Reconnecting after a stream drops.  Each entry is the wait before one
@@ -290,6 +296,7 @@ class PyodeApp(App[None]):
         self._last_signature: tuple | None = None
         self._timer: Timer | None = None
         self._library_timer: Timer | None = None
+        self._volume_save_timer: Timer | None = None
         self._library_conflict = False
         # Recovery state for the station that is playing.
         self._playing_since: float | None = None
@@ -314,7 +321,7 @@ class PyodeApp(App[None]):
                 yield Static("", id="stations-empty")
             yield DialRule(id="dial")
             with Vertical(id="right"):
-                yield NowPlaying(id="meta")
+                yield NowPlaying(keymap=self.keymap, id="meta")
                 with Vertical(id="signal-pane"):
                     yield Label("SIGNAL", classes="eyebrow")
                     yield SignalMeter(id="signal")
@@ -586,7 +593,15 @@ class PyodeApp(App[None]):
         # a modal owns focus (including its results table).
         return not isinstance(self.screen, ModalScreen)
 
-    def _save_preferences(self) -> None:
+    def _save_preferences(self, *, report: bool = True) -> None:
+        """Write every preference now.
+
+        This includes the current volume, so it also covers any volume save
+        still waiting to happen.
+        """
+        if self._volume_save_timer is not None:
+            self._volume_save_timer.stop()
+            self._volume_save_timer = None
         if self._config_path is None:
             return
         try:
@@ -594,7 +609,15 @@ class PyodeApp(App[None]):
                 self.keymap, self.player.status.volume, self._visualiser, self.history.persist
             ).save(self._config_path)
         except OSError as exc:
-            self.notify(f"Could not save preferences: {exc}", severity="error")
+            if report:
+                self.notify(f"Could not save preferences: {exc}", severity="error")
+            else:
+                log.warning("could not save preferences: %s", exc)
+
+    def _save_volume_later(self) -> None:
+        if self._volume_save_timer is not None:
+            self._volume_save_timer.stop()
+        self._volume_save_timer = self.set_timer(VOLUME_SAVE_DELAY, self._save_preferences)
 
     def action_cursor_up(self) -> None:
         self.query_one("#station-table", StationTable).action_cursor_up()
@@ -691,7 +714,7 @@ class PyodeApp(App[None]):
 
     def action_volume(self, delta: int) -> None:
         self.player.adjust_volume(delta)
-        self._save_preferences()
+        self._save_volume_later()
 
     def action_move(self, delta: int) -> None:
         """Shift the selected station past its visible neighbour.
@@ -796,5 +819,9 @@ class PyodeApp(App[None]):
             if timer is not None:
                 timer.stop()
         self._timer = self._library_timer = self._reconnect_timer = None
+        if self._volume_save_timer is not None:
+            # Quitting right after a volume change must not lose it.  There is
+            # no screen left to show an error on, so a failure is logged.
+            self._save_preferences(report=False)
         self.player.close()
         await self.api.close()

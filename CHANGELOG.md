@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## Unreleased
+
+### Fixed
+
+- The "try again" hint after a stream fails names the play key for the
+  active keymap (`l` in Vim mode, `→` otherwise), as the footer does.
+- Holding the volume keys no longer writes `config.toml` on every press; the
+  volume is saved once the keys settle, and on quit if a save is pending.
+
+## 0.3.0
 
 The first release published to PyPI, as `pyode-radio`. Version 0.2.0 was
 prepared but never released; its changes are included here.
