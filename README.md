@@ -160,13 +160,16 @@ needle marks where the playing station falls in your library.
 | `t` | Track history |
 | `c` | Copy the current track title |
 | `v` | Show or hide the signal meter |
-| `/` | Search the directory |
+| `/` | Browse or search the directory |
 | `?` | Show controls for the active keymap |
 | `q` | Quit |
 
-In directory search, Enter submits the query or adds the highlighted result,
-Tab changes focus, and Escape closes the dialog. Up/down work in the results;
-Vim mode adds j/k there. Text fields retain normal typing and cursor movement.
+The directory dialog opens on a short menu: popular stations, top voted, by
+genre, and by country. Enter opens a list or adds the highlighted station, and
+Escape goes back one level before it closes the dialog. Typing a name or tag
+and pressing Enter searches instead. Down or Tab moves from the search box into
+the list; up/down work there, and Vim mode adds j/k. Text fields retain normal
+typing and cursor movement.
 Playback and library shortcuts apply only to the main screen. Undo lasts for
 this session and restores the station without restarting playback. Moving a
 station while favourites are shown swaps it with the neighbouring favourite.
@@ -231,6 +234,11 @@ free volunteer-run directory. pyode identifies itself by User-Agent, asks the
 server to filter out broken streams, and reports plays back so the community's
 popularity ranking stays useful. The mirror is found over DNS, falling back to
 `de1.api.radio-browser.info`.
+
+Browsing by genre lists the 100 tags with the most stations and matches the one
+you pick exactly, so "rock" does not also bring in "80s rock" or "rockabilly".
+A typed search matches tags loosely, which suits a search. Each list shows up
+to 60 stations, most played first.
 
 ## Small terminals
 

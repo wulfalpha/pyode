@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from textual import events, work
@@ -178,67 +179,178 @@ class StationTable(NavigationTable):
         self.post_message(self.Resized())
 
 
-class SearchScreen(ModalScreen[int]):
-    """Search the directory and add stations to the library."""
+@dataclass
+class _Level:
+    """One level of the directory dialog: what the table is showing."""
 
-    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+    title: str
+    kind: str  # "menu", "stations", "tags" or "countries"
+    items: list = field(default_factory=list)
+    cursor: int = 0  # restored when coming back to this level
+
+
+# The dialog's opening menu: label and what choosing it does.
+BROWSE_MENU = (
+    ("Popular stations", "popular"),
+    ("Top voted", "voted"),
+    ("By genre…", "tags"),
+    ("By country…", "countries"),
+)
+
+DIRECTORY_LIMIT = 60  # stations per list; enough to choose from, quick to fetch
+GENRE_LIMIT = 100
+
+
+class SearchScreen(ModalScreen[int]):
+    """Browse or search the directory and add stations to the library.
+
+    The table shows one level at a time, kept on a stack: the menu at the
+    bottom, then whatever was opened from it.  Enter opens a level or adds a
+    station, and Escape goes back one level before it closes the dialog.
+    """
+
+    BINDINGS = [
+        Binding("escape", "back", "Back", show=False),
+        Binding("down", "focus_results", show=False),
+    ]
 
     def __init__(self, api: RadioBrowser, library: StationLibrary) -> None:
         super().__init__()
         self._api = api
         self._library = library
-        self._results: list[Station] = []
+        self._levels = [_Level("Browse the directory", "menu", list(BROWSE_MENU))]
         self._added = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="search-box"):
-            yield Label("SEARCH THE DIRECTORY", classes="eyebrow")
-            yield Input(placeholder="Station name or tag")
+            yield Label("THE DIRECTORY", classes="eyebrow")
+            yield Input(placeholder="Search by station name or tag, or browse below")
             yield NavigationTable(id="results", cursor_type="row")
-            yield Static("Type a search and press Enter.", id="search-status")
+            yield Static("", id="search-status")
 
     def on_mount(self) -> None:
-        table = self.query_one("#results", DataTable)
-        table.add_columns("Station", "Country", "Quality")
+        self._show_level()
         self.query_one(Input).focus()
+
+    @property
+    def _level(self) -> _Level:
+        return self._levels[-1]
 
     def _status(self, message: str) -> None:
         self.query_one("#search-status", Static).update(message)
+
+    def _show_level(self, message: str = "") -> None:
+        """Show the top level, with a status line saying what Enter will do."""
+        level = self._level
+        table = self.query_one("#results", DataTable)
+        table.clear(columns=True)
+        if level.kind == "menu":
+            table.add_column("Browse")
+            for label, _action in level.items:
+                table.add_row(label)
+            hint = "Type a search and press Enter, or choose a list."
+        elif level.kind == "stations":
+            table.add_columns("Station", "Country", "Quality")
+            for station in level.items:
+                table.add_row(station.name, station.country, _quality(station))
+            hint = "Enter adds the highlighted station. Escape goes back."
+            if not level.items:
+                hint = "Nothing found. Escape goes back."
+        else:
+            table.add_columns("Genre" if level.kind == "tags" else "Country", "Stations")
+            for item in level.items:
+                table.add_row(item.name, str(item.station_count))
+            hint = "Enter lists its stations. Escape goes back."
+        if level.items:
+            table.move_cursor(row=min(level.cursor, len(level.items) - 1))
+        prefix = "" if level.kind == "menu" else f"{level.title}. "
+        self._status(message or f"{prefix}{hint}")
+
+    def _open(self, level: _Level, message: str = "") -> None:
+        self._level.cursor = self.query_one("#results", DataTable).cursor_row
+        self._levels.append(level)
+        self._show_level(message)
+        self.query_one("#results", DataTable).focus()
+
+    # -- searching ----------------------------------------------------------
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         query = event.value.strip()
         if query:
             self._search(query)
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="directory")
     async def _search(self, query: str) -> None:
         self._status(f"Searching for {query}…")
+        message = ""
         try:
-            found = await self._api.search(name=query, limit=60)
+            found = await self._api.search(name=query, limit=DIRECTORY_LIMIT)
             if not found:
                 # A word that finds nothing as a name is usually a genre.
-                found = await self._api.search(tag=query, limit=60)
+                found = await self._api.search(tag=query, limit=DIRECTORY_LIMIT)
                 if found:
-                    self._status(f"No station named {query}. Showing the {query} tag instead.")
+                    message = f"No station named {query}. Showing the {query} tag instead."
         except RadioBrowserError as exc:
             self._status(str(exc))
             return
-
-        self._results = found
-        table = self.query_one("#results", DataTable)
-        table.clear()
-        for station in found:
-            table.add_row(station.name, station.country, _quality(station))
+        # A new search replaces whatever was being browsed, so Escape leads
+        # straight back to the menu rather than through old results.
+        del self._levels[1:]
         if not found:
-            self._status(f"Nothing found for {query}.")
-            return
-        self._status(f"{len(found)} found. Enter adds the highlighted station.")
-        table.focus()
+            message = f"Nothing found for {query}. Escape goes back."
+        self._open(_Level(f"Results for {query}", "stations", found), message)
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        if not 0 <= event.cursor_row < len(self._results):
+    # -- browsing -----------------------------------------------------------
+
+    @work(exclusive=True, group="directory")
+    async def _browse(self, title: str, kind: str, fetch) -> None:
+        self._status(f"Loading {title.lower().rstrip('…')}…")
+        try:
+            items = await fetch()
+        except RadioBrowserError as exc:
+            self._status(str(exc))
             return
-        station = self._results[event.cursor_row]
+        self._open(_Level(title, kind, items))
+
+    def _choose(self, row: int) -> None:
+        level = self._level
+        if not 0 <= row < len(level.items):
+            return
+        item = level.items[row]
+        api = self._api
+        if level.kind == "stations":
+            self._add(item)
+        elif level.kind == "menu":
+            label, action = item
+            if action == "popular":
+                self._browse(label, "stations", lambda: api.top_clicked(DIRECTORY_LIMIT))
+            elif action == "voted":
+                self._browse(label, "stations", lambda: api.top_voted(DIRECTORY_LIMIT))
+            elif action == "tags":
+                self._browse("Genres", "tags", lambda: api.tags(limit=GENRE_LIMIT))
+            elif action == "countries":
+                self._browse("Countries", "countries", self._countries)
+        elif level.kind == "tags":
+            self._browse(
+                item.name,
+                "stations",
+                lambda: api.search(tag=item.name, tag_exact=True, limit=DIRECTORY_LIMIT),
+            )
+        elif level.kind == "countries":
+            self._browse(
+                item.name,
+                "stations",
+                lambda: api.search(country_code=item.code, limit=DIRECTORY_LIMIT),
+            )
+
+    async def _countries(self) -> list:
+        # Alphabetical is what anyone scanning for a country expects; empty
+        # entries and ones without a code to search by are left out.
+        countries = await self._api.countries()
+        usable = [c for c in countries if c.code and c.station_count]
+        return sorted(usable, key=lambda c: c.name.casefold())
+
+    def _add(self, station: Station) -> None:
         try:
             with self._library.editing():
                 added = self._library.add(station)
@@ -251,8 +363,25 @@ class SearchScreen(ModalScreen[int]):
         self._added += 1
         self._status(f"Added {station.name}.")
 
-    def action_close(self) -> None:
-        self.dismiss(self._added)
+    # -- keys ---------------------------------------------------------------
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        event.stop()
+        self._choose(event.cursor_row)
+
+    def action_focus_results(self) -> None:
+        # Down from the search box moves into the list, as it would in a
+        # menu; Input has no use for it.
+        self.query_one("#results", DataTable).focus()
+
+    def action_back(self) -> None:
+        if len(self._levels) == 1:
+            self.dismiss(self._added)
+            return
+        self.workers.cancel_group(self, "directory")
+        self._levels.pop()
+        self._show_level()
+        self.query_one("#results", DataTable).focus()
 
 
 class PyodeApp(App[None]):

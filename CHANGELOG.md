@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Browse the directory: the search dialog opens on a menu of popular
+  stations, top voted, by genre, and by country. Enter opens a list or adds a
+  station, Escape goes back a level, and Down moves from the search box into
+  the list. Genres match their tag exactly.
+
 ### Fixed
 
 - The "try again" hint after a stream fails names the play key for the

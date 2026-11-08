@@ -69,7 +69,8 @@ def help_text(keymap: str) -> str:
     lines.extend(
         [
             "",
-            "Search: Enter searches / adds; Tab changes focus.",
+            "Directory: Enter searches, opens a list, or adds a station.",
+            "Escape goes back a level; Down or Tab moves into the list.",
             "History: Enter or c copies the highlighted title.",
             "j/k move through results in Vim mode. Typing edits the search.",
             "Escape closes dialogs. Playback controls apply to the main screen.",
