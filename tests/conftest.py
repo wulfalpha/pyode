@@ -3,7 +3,7 @@ import pathlib
 
 import httpx
 import pytest
-from fakes import FakePlayer
+from fakes import FakeMediaSession, FakePlayer
 
 from pyode.browser import RadioBrowser
 from pyode.stations import Station, StationLibrary
@@ -80,3 +80,23 @@ def clipboard(monkeypatch):
     copied: list[str] = []
     monkeypatch.setattr(pyode.app, "_native_copy", lambda text: copied.append(text) or True)
     return copied
+
+
+@pytest.fixture(autouse=True)
+def media(monkeypatch):
+    """Keep the tests out of the developer's Now Playing and media keys.
+
+    Returns a list that receives each app's session as it mounts.
+    """
+    import pyode.mediacontrols
+
+    sessions: list[FakeMediaSession] = []
+
+    def create(commands, *, enabled=True):
+        if not enabled:
+            return pyode.mediacontrols.NullSession()
+        sessions.append(FakeMediaSession(commands))
+        return sessions[-1]
+
+    monkeypatch.setattr(pyode.mediacontrols, "create", create)
+    return sessions

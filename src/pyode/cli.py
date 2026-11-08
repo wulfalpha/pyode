@@ -128,6 +128,7 @@ def _run_tui(
     keymap: str,
     config_path: Path,
     save_history: bool = True,
+    media_controls: bool = True,
 ) -> int:
     from pyode.app import PyodeApp
 
@@ -144,6 +145,7 @@ def _run_tui(
         keymap=keymap,
         config_path=config_path,
         save_history=save_history,
+        media_controls=media_controls,
     ).run()
     return 0
 
@@ -179,6 +181,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="hide the signal meter (saved)",
     )
     parser.set_defaults(visualiser=None)
+    parser.add_argument(
+        "--no-media-keys",
+        action="store_false",
+        dest="media_controls",
+        help="leave the media keys and macOS Now Playing to other apps",
+    )
     parser.add_argument(
         "--list", action="store_true", dest="list_stations", help="print the library and exit"
     )
@@ -263,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         keymap=args.keymap or prefs.keymap,
         config_path=config_path,
         save_history=prefs.history,
+        media_controls=args.media_controls,
     )
 
 

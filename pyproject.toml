@@ -24,6 +24,8 @@ dependencies = [
     "python-mpv>=1.0.8",
     "httpx>=0.28",
     "platformdirs>=4.11",
+    # Now Playing and the media keys; see pyode.mediacontrols.
+    "pyobjc-framework-MediaPlayer>=11; sys_platform == 'darwin'",
 ]
 
 [project.urls]
