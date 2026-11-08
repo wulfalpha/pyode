@@ -105,7 +105,8 @@ You can edit the file while pyode is running. pyode notices within a couple
 of seconds and reloads it, and before saving any change of its own it checks
 again, so your edit is never overwritten with an older copy. If the edited
 file cannot be read (saved in the wrong encoding, say), pyode says so and
-refuses to save over it until it is fixed.
+refuses to save over it until it is fixed. A station removed from the file
+while it plays carries on until you stop it.
 
 Favourites are a `favorite` column rather than a second file, so a station has
 exactly one record and marking one cannot desynchronise from renaming or

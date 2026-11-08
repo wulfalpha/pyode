@@ -910,6 +910,64 @@ async def test_an_unreadable_outside_edit_is_reported_once(app, library):
         assert app.query_one("#station-table", DataTable).row_count == 3
 
 
+def _remove_outside(library, key):
+    """Drop a station from the CSV as another program would."""
+    import os
+
+    edited = StationLibrary(
+        [s for s in library if s.key != key], path=library.path.with_name("other.csv")
+    )
+    edited.save()
+    edited.path.replace(library.path)
+    os.utime(library.path, ns=(1, 1))
+
+
+async def test_a_station_removed_outside_keeps_logging_titles(app, library, player):
+    library.save()
+    async with app.run_test():
+        app._timer.stop()
+        await app.run_action("play")
+        playing = library[0]
+        _remove_outside(library, playing.key)
+        app._poll_library()
+        assert library.find(playing.key) is None
+        _announce(app, player, "Artist - Song")
+        assert [(t.station, t.title) for t in app.history] == [(playing.name, "Artist - Song")]
+        assert app._playing_station() == playing
+
+
+async def test_a_station_removed_outside_is_still_reconnected(app, library, player):
+    library.save()
+    async with app.run_test():
+        playing = library[0]
+        app._timer.stop()
+        await app.run_action("play")
+        app._tick()  # observes PLAYING
+        _remove_outside(library, playing.key)
+        app._poll_library()
+        _set_state(player, PlayerState.ERROR, "stream ended")
+        app._tick()
+        assert app._reconnect_timer is not None
+        app._reconnect_timer.stop()
+        app._reconnect()
+        assert player.calls[-1] == ("play", playing.url, playing.name)
+
+
+async def test_a_station_renamed_outside_shows_the_new_name(app, library, player):
+    import os
+
+    library.save()
+    async with app.run_test():
+        app._timer.stop()
+        await app.run_action("play")
+        with library.editing():
+            library.update(library[0].key, name="Renamed")
+        os.utime(library.path, ns=(1, 1))
+        _announce(app, player, "Artist - Song")
+        assert app._playing_station().name == "Renamed"
+        assert app.history.recent()[0].station == "Renamed"
+
+
 # -- track history ----------------------------------------------------------
 
 

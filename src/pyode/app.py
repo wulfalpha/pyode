@@ -434,7 +434,9 @@ class PyodeApp(App[None]):
         self._removed: tuple[Station, int] | None = None
         self._visualiser = visualiser
         self._autoplay = autoplay
-        self._playing_key: str | None = None
+        # The station itself, not just its key: an outside edit can remove it
+        # from the library while it plays, and it should play on regardless.
+        self._playing: Station | None = None
         self._last_state: PlayerState | None = None
         self._last_signature: tuple | None = None
         self._timer: Timer | None = None
@@ -541,10 +543,18 @@ class PyodeApp(App[None]):
         row = self.query_one("#station-table", StationTable).cursor_row
         return self._visible[row] if 0 <= row < len(self._visible) else None
 
+    @property
+    def _playing_key(self) -> str | None:
+        return self._playing.key if self._playing is not None else None
+
     def _playing_station(self) -> Station | None:
+        """What is playing: the library's copy if it has one, which carries any
+        outside edit to its name, or else the station as it was started."""
         if self._preview is not None:
             return self._preview
-        return self.library.find(self._playing_key) if self._playing_key else None
+        if self._playing is None:
+            return None
+        return self.library.find(self._playing.key) or self._playing
 
     def _tick(self) -> None:
         try:
@@ -833,7 +843,7 @@ class PyodeApp(App[None]):
             self._notice = ""
         self._playing_since = None
         self.player.play(station.url, station.name)
-        self._playing_key = station.key
+        self._playing = station
         # Starting a station always deserves a redraw.  Without this, retrying
         # a station that fails the same way twice produces an identical status
         # signature, and the second failure would pass unreported.
@@ -857,7 +867,7 @@ class PyodeApp(App[None]):
             self._resume_key = self._playing_key
         self._cancel_reconnect()
         self._preview = station
-        self._playing_key = None
+        self._playing = None
         self._playing_since = None
         self._last_state = None
         self._last_signature = None
@@ -885,8 +895,9 @@ class PyodeApp(App[None]):
             return
         preview, resume_key = self._preview, self._resume_key
         self._preview, self._preview_session, self._resume_key = None, False, None
-        if preview is not None and self.library.find(preview.key) is not None:
-            self._playing_key = preview.key
+        added = self.library.find(preview.key) if preview is not None else None
+        if added is not None:
+            self._playing = added
             self._last_signature = None
             self._sync_dial()
             return
@@ -895,7 +906,7 @@ class PyodeApp(App[None]):
             self._start(resume, user=False)
             return
         self.player.stop()
-        self._playing_key = None
+        self._playing = None
         self.query_one(SignalMeter).clear()
         self._sync_dial()
 
@@ -915,7 +926,7 @@ class PyodeApp(App[None]):
     def action_stop(self) -> None:
         self._cancel_reconnect()
         self.player.stop()
-        self._playing_key = None
+        self._playing = None
         self._playing_since = None
         self.query_one(SignalMeter).clear()
         self._sync_dial()
