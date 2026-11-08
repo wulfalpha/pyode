@@ -122,6 +122,7 @@ pyode --list                   # print the library and exit
 pyode --history                # print recently heard tracks and exit
 pyode --libmpv                 # report where libmpv was looked for, and exit
 pyode --no-visualiser          # start with the signal meter hidden
+pyode --no-media-keys          # leave media keys and Now Playing to other apps
 pyode --keymap vim              # save Vim controls (arrows remain available)
 pyode --keymap standard         # return to the standard controls
 pyode --visualiser              # show the signal meter again
@@ -205,6 +206,19 @@ that drops while paused waits for you to press space.
 If a station from the directory fails to start at all, pyode looks it up
 again by its directory ID. Station addresses change often; when the directory
 has a new one, pyode saves it to your library and tries again.
+
+### Media keys and Now Playing
+
+On macOS, pyode shows up in Control Center's Now Playing panel: the track
+title when the station sends one, with the station beneath it, or else just
+the station. The play/pause key and the panel's buttons pause and resume, and
+the next and previous keys step through your station list, wrapping at the
+ends. With nothing playing, play starts the selected station.
+
+This takes the media keys while pyode is open, as any music player would. To
+leave them to another app, start pyode with `--no-media-keys`; unlike the
+options below, it applies to that run only and is not saved. Other platforms
+are not supported yet.
 
 ### Preferences
 

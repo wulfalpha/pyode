@@ -55,3 +55,31 @@ class FakePlayer:
 
     def level(self) -> float | None:
         return self._level
+
+
+class FakeMediaSession:
+    """Stands in for the system's media controls, recording what it is shown.
+
+    `press` plays the part of a media key: the real session delivers commands
+    from inside `pump`, on the app's tick, and so does this one.
+    """
+
+    def __init__(self, commands) -> None:
+        self.commands = commands
+        self.shown: list = []
+        self.pending: list[str] = []
+        self.closed = False
+
+    def press(self, name: str) -> None:
+        self.pending.append(name)
+
+    def update(self, info) -> None:
+        if not self.shown or self.shown[-1] != info:
+            self.shown.append(info)
+
+    def pump(self) -> None:
+        while self.pending:
+            getattr(self.commands, self.pending.pop(0))()
+
+    def close(self) -> None:
+        self.closed = True

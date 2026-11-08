@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- macOS Now Playing and media keys: pyode appears in Control Center with the
+  track and station, play/pause pauses and resumes, and next/previous step
+  through the station list. `--no-media-keys` leaves them to other apps for
+  that run. On macOS this adds a dependency on PyObjC's MediaPlayer bindings.
+
 ## 0.4.0
 
 ### Added

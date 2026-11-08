@@ -28,6 +28,7 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import DataTable, Input, Label, Static
 
+from pyode import mediacontrols
 from pyode.browser import RadioBrowser, RadioBrowserError
 from pyode.config import Preferences
 from pyode.history import TrackHistory
@@ -416,6 +417,7 @@ class PyodeApp(App[None]):
         config_path: Path | None = None,
         history: TrackHistory | None = None,
         save_history: bool = True,
+        media_controls: bool = True,
     ) -> None:
         super().__init__()
         self.library = library if library is not None else StationLibrary.load()
@@ -455,6 +457,10 @@ class PyodeApp(App[None]):
         self._preview: Station | None = None
         self._preview_session = False
         self._resume_key: str | None = None
+        # Now Playing and the media keys.  Registered on mount, so a test that
+        # never mounts the app never touches the system's media controls.
+        self._media_controls = media_controls
+        self._media: mediacontrols.MediaSession = mediacontrols.NullSession()
 
     # -- layout -----------------------------------------------------------
 
@@ -485,6 +491,17 @@ class PyodeApp(App[None]):
         self._save_preferences()
         self._timer = self.set_interval(TICK, self._tick)
         self._library_timer = self.set_interval(LIBRARY_POLL, self._poll_library)
+        self._media = mediacontrols.create(
+            mediacontrols.Commands(
+                play=self._media_play,
+                pause=self._media_pause,
+                toggle=self._media_toggle,
+                stop=self._media_stop,
+                next=lambda: self._step_station(1),
+                previous=lambda: self._step_station(-1),
+            ),
+            enabled=self._media_controls,
+        )
         if self._autoplay is not None:
             self._start(self._autoplay)
 
@@ -557,6 +574,8 @@ class PyodeApp(App[None]):
         return self.library.find(self._playing.key) or self._playing
 
     def _tick(self) -> None:
+        # Deliver any media keys pressed since the last tick.
+        self._media.pump()
         try:
             meter = self.query_one(SignalMeter)
         except NoMatches:
@@ -598,6 +617,7 @@ class PyodeApp(App[None]):
             self._record(station.name, status.now_playing.title)
         reconnecting = self._reconnect_timer is not None
         self.query_one(NowPlaying).update(status, station, self._notice)
+        self._media.update(mediacontrols.describe(status, station.name if station else None))
         self.query_one(ControlBar).update(status, station, reconnecting=reconnecting)
         self.query_one(TopBar).update(
             station_count=len(self.library), live=status.state.name == "PLAYING"
@@ -931,6 +951,51 @@ class PyodeApp(App[None]):
         self.query_one(SignalMeter).clear()
         self._sync_dial()
 
+    # -- media keys ---------------------------------------------------------
+
+    def _media_play(self) -> None:
+        state = self.player.status.state
+        if state is PlayerState.PAUSED:
+            self.player.toggle_pause()
+        elif state in (PlayerState.IDLE, PlayerState.ERROR) and not self._preview_session:
+            station = self._playing_station()
+            if station is not None:
+                self._start(station)
+            else:
+                self.action_play()
+
+    def _media_pause(self) -> None:
+        if self.player.status.state in (PlayerState.PLAYING, PlayerState.BUFFERING):
+            self.player.toggle_pause()
+
+    def _media_toggle(self) -> None:
+        if self.player.status.state in (PlayerState.PLAYING, PlayerState.BUFFERING):
+            self.player.toggle_pause()
+        else:
+            self._media_play()
+
+    def _media_stop(self) -> None:
+        if self._preview_session:
+            self.stop_preview()
+        else:
+            self.action_stop()
+
+    def _step_station(self, delta: int) -> None:
+        """Play the next or previous station in the list, wrapping at the ends.
+
+        Steps from the playing station when it is in view; otherwise plays
+        the station under the cursor.  Ignored while the directory dialog is open, where a library
+        station would trample the preview.
+        """
+        if self._preview_session or not self._visible:
+            return
+        keys = [s.key for s in self._visible]
+        if self._playing_key in keys:
+            here = keys.index(self._playing_key)
+        else:
+            here = self.query_one("#station-table", StationTable).cursor_row - delta
+        self._start(self._visible[(here + delta) % len(self._visible)])
+
     def action_toggle_mute(self) -> None:
         self.player.toggle_mute()
 
@@ -1045,5 +1110,6 @@ class PyodeApp(App[None]):
             # Quitting right after a volume change must not lose it.  There is
             # no screen left to show an error on, so a failure is logged.
             self._save_preferences(report=False)
+        self._media.close()
         self.player.close()
         await self.api.close()
