@@ -35,7 +35,7 @@ source checkout is needed. If uv's tool directory is not on PATH, run
 `uv tool update-shell` and restart your shell.
 
 For an unreleased checkout, use `uv tool install .` or `pip install .`.
-The 0.2.0 changes described here become available by package name after the
+The 0.3.0 changes described here become available by package name after the
 release is published to PyPI. libmpv remains a separately installed native dependency.
 
 ## Requirements
@@ -256,8 +256,8 @@ uv run pyode --silent --seconds 10 --play <stream-url>   # decode without an aud
 Build and check an installed release (requires network access for dependencies):
 
 ```bash
-uv build --out-dir dist/0.2.0-radio
-uv run python scripts/check_install.py dist/0.2.0-radio
+uv build --out-dir dist/0.3.0-radio
+uv run python scripts/check_install.py dist/0.3.0-radio
 ```
 
 See [the release procedure](docs/releasing.md) for PyPI setup and publishing.
