@@ -209,16 +209,24 @@ has a new one, pyode saves it to your library and tries again.
 
 ### Media keys and Now Playing
 
-On macOS, pyode shows up in Control Center's Now Playing panel: the track
+pyode shows up wherever your desktop shows what is playing: Control Center's
+Now Playing panel on macOS, and on Linux anything that speaks MPRIS — GNOME
+and KDE Plasma's media controls, waybar, `playerctl`. It shows the track
 title when the station sends one, with the station beneath it, or else just
 the station. The play/pause key and the panel's buttons pause and resume, and
 the next and previous keys step through your station list, wrapping at the
-ends. With nothing playing, play starts the selected station.
+ends. With nothing playing, play starts the selected station. On Linux the
+panel's volume slider sets pyode's volume too.
+
+```bash
+playerctl -p pyode play-pause
+playerctl -p pyode metadata title
+```
 
 This takes the media keys while pyode is open, as any music player would. To
 leave them to another app, start pyode with `--no-media-keys`; unlike the
-options below, it applies to that run only and is not saved. Other platforms
-are not supported yet.
+options below, it applies to that run only and is not saved. Windows is not
+supported yet.
 
 ### Preferences
 
