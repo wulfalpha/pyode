@@ -8,6 +8,9 @@
   track and station, play/pause pauses and resumes, and next/previous step
   through the station list. `--no-media-keys` leaves them to other apps for
   that run. On macOS this adds a dependency on PyObjC's MediaPlayer bindings.
+- MPRIS on Linux: the same controls through GNOME, KDE Plasma, waybar and
+  `playerctl`, plus the panel's volume slider. A second pyode registers under
+  its own instance name. On Linux this adds a dependency on dbus-fast.
 
 ## 0.4.0
 
