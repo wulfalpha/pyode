@@ -8,6 +8,9 @@
   stations, top voted, by genre, and by country. Enter opens a list or adds a
   station, Escape goes back a level, and Down moves from the search box into
   the list. Genres match their tag exactly.
+- Listen before adding: Space in a directory list plays the highlighted
+  station. On closing, a station you added keeps playing; otherwise
+  whatever was playing before comes back.
 
 ### Fixed
 

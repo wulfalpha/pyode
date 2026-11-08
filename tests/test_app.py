@@ -507,7 +507,8 @@ async def test_search_typing_and_results_do_not_control_player(library, player, 
         table.focus()
         await pilot.press("j", "j", "k")
         assert table.cursor_row == 1
-        await pilot.press("h", "l", "right", "left", "space", "d", "f", "p", "s", "q")
+        # Space is left out: in a station list it previews (tested below).
+        await pilot.press("h", "l", "right", "left", "d", "f", "p", "s", "q")
         assert not player.calls
         assert len(library) == 3
         assert library[0].favorite
@@ -1293,3 +1294,166 @@ async def test_a_search_from_deep_in_a_list_backs_out_to_the_menu(library, playe
         assert _rows(screen) == ["soma station"]
         await pilot.press("escape")
         assert screen._level.kind == "menu"
+
+
+# -- listening before adding ------------------------------------------------------
+
+
+async def _popular(pilot):
+    """Open the directory on its Popular list, with the list focused."""
+    screen = await _open_directory(pilot)
+    await pilot.press("down", "enter")
+    await _settle(pilot, screen)
+    return screen
+
+
+async def test_space_previews_a_station_without_adding_it(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        screen = await _popular(pilot)
+        await pilot.press("space")
+        assert player.calls[-1] == ("play", "https://stream/p1", "Popular One")
+        assert app.previewing.name == "Popular One"
+        assert len(library) == 3
+        assert "Listening to Popular One" in str(screen.query_one("#search-status").content)
+        app._tick()  # the control bar redraws on the next tick
+        assert "Popular One" in str(app.query_one("#ctl-station", Static).content)
+        await pilot.press("space")  # same station again: stop
+        assert player.calls[-1] == ("stop",)
+        assert app.previewing is None
+
+
+async def test_closing_goes_back_to_what_was_playing(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        await pilot.press("down", "p")  # library station 1 is playing
+        screen = await _popular(pilot)
+        await pilot.press("space", "escape", "escape")
+        assert not isinstance(app.screen, SearchScreen)
+        assert player.calls[-1] == ("play", library[1].url, library[1].name)
+        assert app._playing_key == library[1].key
+        assert app.query_one(DialRule).position == 0.5
+        assert screen.app.previewing is None
+
+
+async def test_closing_stops_a_preview_when_nothing_was_playing(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        await _popular(pilot)
+        await pilot.press("space", "escape", "escape")
+        assert player.calls[-1] == ("stop",)
+        assert app._playing_key is None
+
+
+async def test_an_added_preview_keeps_playing(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await _popular(pilot)
+        await pilot.press("space", "enter", "escape", "escape")
+        added = library[-1]
+        assert added.name == "Popular One"
+        assert player.calls[-1] == ("play", "https://stream/p1", "Popular One")  # no restart
+        assert app._playing_key == added.key
+        assert app.query_one(DialRule).position == 1.0
+
+
+async def test_closing_without_a_preview_leaves_playback_alone(library, player):
+    async with PyodeApp(
+        library=library, player=player, api=FakeDirectory().api()
+    ).run_test() as pilot:
+        await pilot.press("p")
+        await _open_directory(pilot)
+        await pilot.press("escape")
+        assert [c[0] for c in player.calls] == ["play"]
+
+
+async def test_space_in_the_search_box_types(library, player):
+    async with PyodeApp(
+        library=library, player=player, api=FakeDirectory().api()
+    ).run_test() as pilot:
+        screen = await _open_directory(pilot)
+        await pilot.press(*"lo fi")
+        assert screen.query_one(Input).value == "lo fi"
+        assert not player.calls
+
+
+async def test_space_on_a_menu_or_genre_list_does_nothing(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        screen = await _open_directory(pilot)
+        await pilot.press("down", "space")
+        await pilot.press("down", "down", "enter")
+        await _settle(pilot, screen)
+        await pilot.press("space")
+        assert not player.calls
+
+
+async def test_a_failed_preview_is_reported_not_retried(library, player):
+    from dataclasses import replace
+
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        toasts = []
+        app.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+        app._timer.stop()
+        await _popular(pilot)
+        await pilot.press("space")
+        app._tick()  # observed playing, so a real station would reconnect
+        player.status = replace(player.status, state=PlayerState.ERROR, error="stream ended")
+        app._tick()
+        assert app._reconnect_timer is None
+        assert toasts[-1][1]["title"] == "Preview failed"
+        await app.workers.wait_for_complete()
+        assert not any(path == "/json/stations/byuuid" for path, _ in directory.requests)
+
+
+async def test_previews_are_logged_to_history(library, player):
+    from dataclasses import replace
+
+    app = PyodeApp(library=library, player=player, api=FakeDirectory().api())
+    async with app.run_test() as pilot:
+        app._timer.stop()
+        await _popular(pilot)
+        await pilot.press("space")
+        player.status = replace(
+            player.status, now_playing=replace(player.status.now_playing, title="Artist - Song")
+        )
+        app._tick()
+        assert [(t.station, t.title) for t in app.history] == [("Popular One", "Artist - Song")]
+
+
+async def test_closing_does_not_resume_a_station_removed_meanwhile(library, player):
+    """Removed by an outside edit to the CSV while the dialog was open."""
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        await pilot.press("p")  # library station 0 is playing
+        playing = library[0]
+        await _popular(pilot)
+        await pilot.press("space")
+        with library.editing():
+            library.remove(playing.key)
+        await pilot.press("escape", "escape")
+        assert player.calls[-1] == ("stop",)
+        assert app._playing_key is None
+
+
+async def test_an_added_preview_removed_meanwhile_falls_back(library, player):
+    directory = FakeDirectory()
+    app = PyodeApp(library=library, player=player, api=directory.api())
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await _popular(pilot)
+        await pilot.press("space", "enter")
+        with library.editing():
+            library.remove(library[-1].key)  # the station just added
+        await pilot.press("escape", "escape")
+        assert player.calls[-1] == ("play", library[0].url, library[0].name)
+        assert app._playing_key == library[0].key

@@ -207,11 +207,15 @@ class SearchScreen(ModalScreen[int]):
     The table shows one level at a time, kept on a stack: the menu at the
     bottom, then whatever was opened from it.  Enter opens a level or adds a
     station, and Escape goes back one level before it closes the dialog.
+    Space plays the highlighted station as a preview; the app decides what to
+    play once the dialog closes (see `PyodeApp.end_preview`).
     """
 
     BINDINGS = [
         Binding("escape", "back", "Back", show=False),
         Binding("down", "focus_results", show=False),
+        # Space reaches the screen only from the list: the search box types it.
+        Binding("space", "preview", "Listen", show=False),
     ]
 
     def __init__(self, api: RadioBrowser, library: StationLibrary) -> None:
@@ -253,7 +257,7 @@ class SearchScreen(ModalScreen[int]):
             table.add_columns("Station", "Country", "Quality")
             for station in level.items:
                 table.add_row(station.name, station.country, _quality(station))
-            hint = "Enter adds the highlighted station. Escape goes back."
+            hint = "Space listens, Enter adds. Escape goes back."
             if not level.items:
                 hint = "Nothing found. Escape goes back."
         else:
@@ -374,8 +378,23 @@ class SearchScreen(ModalScreen[int]):
         # menu; Input has no use for it.
         self.query_one("#results", DataTable).focus()
 
+    def action_preview(self) -> None:
+        level = self._level
+        row = self.query_one("#results", DataTable).cursor_row
+        if level.kind != "stations" or not 0 <= row < len(level.items):
+            return
+        station = level.items[row]
+        previewing = self.app.previewing
+        if previewing is not None and previewing.key == station.key:
+            self.app.stop_preview()
+            self._status(f"Stopped {station.name}.")
+            return
+        self.app.start_preview(station)
+        self._status(f"Listening to {station.name}. Enter adds it; Space stops.")
+
     def action_back(self) -> None:
         if len(self._levels) == 1:
+            self.app.end_preview()
             self.dismiss(self._added)
             return
         self.workers.cancel_group(self, "directory")
@@ -433,6 +452,12 @@ class PyodeApp(App[None]):
         self._reconnect_timer: Timer | None = None
         self._notice = ""
         self._repair_tried = False
+        # Listening from the directory dialog.  `_preview` is what is playing
+        # now, if anything; `_resume_key` is what was playing when the first
+        # preview started, to go back to when the dialog closes.
+        self._preview: Station | None = None
+        self._preview_session = False
+        self._resume_key: str | None = None
 
     # -- layout -----------------------------------------------------------
 
@@ -522,6 +547,8 @@ class PyodeApp(App[None]):
         return self._visible[row] if 0 <= row < len(self._visible) else None
 
     def _playing_station(self) -> Station | None:
+        if self._preview is not None:
+            return self._preview
         return self.library.find(self._playing_key) if self._playing_key else None
 
     def _tick(self) -> None:
@@ -604,6 +631,11 @@ class PyodeApp(App[None]):
 
         if station is None:
             self.notify(f"{name}: {status.error}.", title="Stream failed", severity="error")
+            return
+        if self._preview is not None:
+            # A preview is a quick listen, not a station to nurse back: no
+            # reconnecting, and no repairing an entry that is not in the library.
+            self.notify(f"{name}: {status.error}.", title="Preview failed", severity="error")
             return
         if self._last_state is PlayerState.PAUSED:
             # Reconnecting would start the audio the user just paused.
@@ -816,6 +848,61 @@ class PyodeApp(App[None]):
         self._sync_dial()
         if user and station.stationuuid:
             self._register_click(station.stationuuid)
+
+    # -- previews -----------------------------------------------------------
+
+    @property
+    def previewing(self) -> Station | None:
+        return self._preview
+
+    def start_preview(self, station: Station) -> None:
+        """Play a directory station without adding it to the library."""
+        if not self._preview_session:
+            self._preview_session = True
+            self._resume_key = self._playing_key
+        self._cancel_reconnect()
+        self._preview = station
+        self._playing_key = None
+        self._playing_since = None
+        self._last_state = None
+        self._last_signature = None
+        self.player.play(station.url, station.name)
+        self.query_one(SignalMeter).clear()
+        self._sync_dial()
+        if station.stationuuid:
+            self._register_click(station.stationuuid)  # a preview is still a listen
+
+    def stop_preview(self) -> None:
+        if self._preview is None:
+            return
+        self._preview = None
+        self.player.stop()
+        self.query_one(SignalMeter).clear()
+
+    def end_preview(self) -> None:
+        """Settle what plays once the directory dialog closes.
+
+        A previewed station that was added keeps playing, now as a library
+        station.  Otherwise whatever was playing before the first preview comes
+        back, or playback stops if nothing was.
+        """
+        if not self._preview_session:
+            return
+        preview, resume_key = self._preview, self._resume_key
+        self._preview, self._preview_session, self._resume_key = None, False, None
+        if preview is not None and self.library.find(preview.key) is not None:
+            self._playing_key = preview.key
+            self._last_signature = None
+            self._sync_dial()
+            return
+        resume = self.library.find(resume_key) if resume_key else None
+        if resume is not None:
+            self._start(resume, user=False)
+            return
+        self.player.stop()
+        self._playing_key = None
+        self.query_one(SignalMeter).clear()
+        self._sync_dial()
 
     @work
     async def _register_click(self, stationuuid: str) -> None:
