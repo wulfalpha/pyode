@@ -680,6 +680,12 @@ class PyodeApp(App[None]):
         self._playing_since = None
         name = station.name if station else "The stream"
 
+        if played_for is None and self.player.retry_through_relay():
+            # It never started, and it was plain http: perhaps a SHOUTcast v1
+            # server that ffmpeg refuses.  The player is trying it again
+            # through the ICY relay, which reports back like any other start.
+            return
+
         if station is None:
             self.notify(f"{name}: {status.error}.", title="Stream failed", severity="error")
             return

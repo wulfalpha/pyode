@@ -33,7 +33,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol
 
-from pyode import libmpv
+from pyode import icyrelay, libmpv
 
 # Re-exported: callers catch this around MpvPlayer(), and should not need to
 # know that finding the library is a separate concern from playing audio.
@@ -139,6 +139,7 @@ class Player(Protocol):
     def adjust_volume(self, delta: int) -> None: ...
     def toggle_mute(self) -> None: ...
     def record(self, path: str | None) -> None: ...
+    def retry_through_relay(self) -> bool: ...
     def close(self) -> None: ...
 
     @property
@@ -186,6 +187,11 @@ class MpvPlayer:
         self._closing = False
         self._meter = meter
         self._recording = False
+        # SHOUTcast v1 stations that need the ICY relay; see pyode.icyrelay.
+        self._relay = icyrelay.IcyRelay()
+        self._needs_relay: set[str] = set()
+        self._requested: str | None = None  # the station's own URL, relayed or not
+        self._relayed = False
 
         self._mpv = mpv.MPV(
             video=False,
@@ -369,8 +375,12 @@ class MpvPlayer:
 
     def play(self, url: str, station_name: str = "") -> None:
         self._end_recording()
+        relayed = url in self._needs_relay
+        target = self._relay.url_for(url) if relayed else url
         with self._lock:
-            self._url = url
+            self._requested = url
+            self._relayed = relayed
+            self._url = target
             self._station = station_name
             self._error = ""
             self._paused = False
@@ -380,7 +390,7 @@ class MpvPlayer:
             self._bitrate_bps = None
             self._cache_seconds = 0.0
         try:
-            self._mpv.play(url)
+            self._mpv.play(target)
             self._mpv.pause = False  # a previous pause would otherwise carry over
         except _MPV_ERRORS as exc:
             self._failed("start playback", exc)
@@ -390,6 +400,7 @@ class MpvPlayer:
     def stop(self) -> None:
         self._end_recording()
         with self._lock:
+            self._requested = None
             self._url = None
             self._station = ""
             self._now = NowPlaying()
@@ -452,6 +463,29 @@ class MpvPlayer:
             return
         self._recording = bool(path)
 
+    def retry_through_relay(self) -> bool:
+        """After a failure, try the same station again through the ICY relay.
+
+        Returns whether it did.  Only a plain http station that has not
+        already been through the relay qualifies; it is then remembered, so
+        reconnecting and replaying it later use the relay straight away.
+        Callers decide when a failure is worth this -- one where the stream
+        never started, typically.
+        """
+        with self._lock:
+            url, relayed, failed, station = (
+                self._requested,
+                self._relayed,
+                bool(self._error),
+                self._station,
+            )
+        if not failed or url is None or relayed or not icyrelay.relayable(url):
+            return False
+        log.info("retrying %s through the ICY relay", url)
+        self._needs_relay.add(url)
+        self.play(url, station)
+        return True
+
     def _end_recording(self) -> None:
         # stream-record is an option, so it would carry over to the next
         # stream and overwrite the file.  Every recording ends with its stream.
@@ -460,6 +494,7 @@ class MpvPlayer:
 
     def close(self) -> None:
         self._end_recording()  # closes the file cleanly before mpv goes
+        self._relay.close()
         with self._lock:
             self._closing = True
         try:

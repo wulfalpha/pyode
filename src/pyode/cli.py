@@ -112,7 +112,7 @@ def _play_headless(args: argparse.Namespace) -> int:
             player.play(args.play, args.name)
             while deadline is None or time.monotonic() < deadline:
                 time.sleep(0.25)
-                if player.status.state is PlayerState.ERROR:
+                if player.status.state is PlayerState.ERROR and not player.retry_through_relay():
                     return 1
     except KeyboardInterrupt:
         print("\nstopped", flush=True)

@@ -17,6 +17,8 @@ class FakePlayer:
         self._level = level
         self.closed = False
         self.recording: str | None = None
+        self.relay_retries = 0  # how many failures retry_through_relay rescues
+        self.relay_asked = 0
 
     # -- Player -----------------------------------------------------------
 
@@ -52,6 +54,16 @@ class FakePlayer:
     def toggle_mute(self) -> None:
         self.calls.append(("toggle_mute",))
         self.status = replace(self.status, muted=not self.status.muted)
+
+    def retry_through_relay(self) -> bool:
+        # Counted apart from `calls`: asking is not a transport action, and
+        # tests that list the actions should not have to mention it.
+        self.relay_asked += 1
+        if self.relay_retries <= 0 or self.status.state is not PlayerState.ERROR:
+            return False
+        self.relay_retries -= 1
+        self.status = replace(self.status, state=PlayerState.PLAYING, error="")
+        return True
 
     def record(self, path: str | None) -> None:
         self.calls.append(("record", path))

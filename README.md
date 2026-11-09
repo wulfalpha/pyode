@@ -81,18 +81,22 @@ pyode searches that directory, so nothing else needs configuring. Run
 
 A handful of older stations (SLAY Radio, for one) run SHOUTcast v1 servers that
 reply with a bare `ICY 200 OK` status line instead of `HTTP/1.1 200 OK`.
-libcurl treats that as invalid (`Received HTTP/0.9 when not allowed`), while
-ffmpeg accepts it. mpv 0.42 added a libcurl stream layer that, when a build
-includes it, opens every `http://` URL first — Homebrew's mpv does — so on
-those builds such stations fail with "loading failed" even though the URL is
-fine.
+Everything after that line is ordinary HTTP, but libcurl has always refused
+it, and since August 2026 so does ffmpeg ("Malformed HTTP status line"). That
+change is already in libmpv builds made from current ffmpeg, such as the
+[zhongfly/mpv-winbuild][winbuild] builds for Windows, and will reach other platforms
+with ffmpeg's next release.
 
-pyode turns that layer off (mpv's `curl-enabled` option) wherever it exists, so
-streams go through ffmpeg as they always did. Builds without it are unaffected.
+pyode plays these stations anyway. When a plain `http://` station fails before
+it starts, pyode tries it once more through a small relay of its own on
+`127.0.0.1`, which fetches the stream and changes `ICY` to `HTTP/1.0` on that
+first line, passing everything else through untouched, track titles included.
+pyode remembers which stations needed it, so reconnects go straight through
+the relay. Stations that work directly never touch it, and HTTPS stations are
+never relayed.
 
-The [zhongfly/mpv-winbuild][winbuild] libmpv for Windows also links libcurl. If
-an ICY station still fails there, `pyode --play <url>` will show the error;
-please report it, along with the libmpv build in use.
+pyode also turns off mpv's libcurl stream layer (the `curl-enabled` option)
+wherever a build has it, so streams go through ffmpeg as they always did.
 
 ## Station library
 
