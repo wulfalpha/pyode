@@ -166,14 +166,19 @@ def app(library, player, api):
     return PyodeApp(library=library, player=player, api=api)
 
 
+# These tick by hand: the fake player reports PLAYING the instant it is asked
+# to play, and a tick in between would count the station as having started.
+
+
 async def test_a_station_that_never_starts_is_retried_through_the_relay(app, player):
     async with app.run_test() as pilot:
         toasts = []
         app.notify = lambda message, **kwargs: toasts.append(message)
+        app._timer.stop()
         player.relay_retries = 1
         await pilot.press("p")
         player.status = replace(player.status, state=PlayerState.ERROR, error="loading failed")
-        await pilot.pause(0.2)
+        app._tick()
         assert player.relay_asked == 1
         assert player.status.state is PlayerState.PLAYING
         assert toasts == []  # rescued quietly
@@ -198,8 +203,9 @@ async def test_when_the_relay_cannot_help_the_failure_is_reported(app, player):
     async with app.run_test() as pilot:
         toasts = []
         app.notify = lambda message, **kwargs: toasts.append(message)
+        app._timer.stop()
         await pilot.press("p")
         player.status = replace(player.status, state=PlayerState.ERROR, error="loading failed")
-        await pilot.pause(0.2)
+        app._tick()
         assert player.relay_asked == 1
         assert any("loading failed" in toast for toast in toasts)
