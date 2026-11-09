@@ -167,6 +167,7 @@ needle marks where the playing station falls in your library.
 | `t` | Track history |
 | `z` | Sleep timer: 15, 30, 45, 60, 90 minutes, off |
 | `r` | Record the playing station, or stop recording |
+| `R` (Shift+r) | Record this track, from its start |
 | `c` | Copy the current track title |
 | `v` | Show or hide the signal meter |
 | `/` | Browse or search the directory |
@@ -234,6 +235,16 @@ to save them somewhere else. Stopping, changing station, or quitting ends the
 recording. If the stream drops and pyode reconnects, the recording carries on
 in a new file. Both the audio and the track list stay usable if pyode is
 closed unexpectedly.
+
+To keep a single song, press `R` while it plays. pyode saves it from where it
+began, even if you tuned in or decided halfway through, and stops by itself
+when the station announces the next track. The file is named after the track,
+for example `Tycho - Awake.mp3`, and the top bar shows `● REC TRACK`. This
+works because pyode holds the last stretch of the stream in memory: tens of
+minutes at typical bitrates, less for FLAC. A track you tuned into partway
+starts where you tuned in. Press `R` or `r` again to save early, and stopping
+or changing station saves what has played so far. It needs a station that
+announces its titles; for one that doesn't, use `r`.
 
 ### Sleep timer
 

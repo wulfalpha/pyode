@@ -55,6 +55,16 @@ def safe_name(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned)[:120] or "pyode"
 
 
+def _unused(directory: Path, stem: str, extension: str) -> Path:
+    """`stem` + `extension` in `directory`, numbered if that is taken."""
+    path = directory / f"{stem}{extension}"
+    number = 2
+    while path.exists() or path.with_suffix(".cue").exists():
+        path = directory / f"{stem} ({number}){extension}"
+        number += 1
+    return path
+
+
 def _cue_time(seconds: float) -> str:
     """mm:ss:ff, where a frame is 1/75 s -- the cue sheet's own unit."""
     frames = round(max(0.0, seconds) * 75)
@@ -79,6 +89,9 @@ class Recording:
     path: Path  # the audio file
     started: float  # on the app's monotonic clock
     tracks: list[Track] = field(default_factory=list)
+    # Set when keeping just one track: its title.  Such a recording has no cue
+    # sheet, and ends when the station moves on to the next title.
+    track: str = ""
 
     @classmethod
     def begin(
@@ -86,12 +99,14 @@ class Recording:
     ) -> Recording:
         """A new recording, with a file name nothing else is using yet."""
         stem = safe_name(f"{station} {when:%Y-%m-%d %H.%M}")
-        path = directory / f"{stem}{extension}"
-        number = 2
-        while path.exists() or path.with_suffix(".cue").exists():
-            path = directory / f"{stem} ({number}){extension}"
-            number += 1
-        return cls(station, path, started)
+        return cls(station, _unused(directory, stem, extension), started)
+
+    @classmethod
+    def for_track(
+        cls, title: str, station: str, extension: str, started: float, *, directory: Path
+    ) -> Recording:
+        """A recording of one track, named after it."""
+        return cls(station, _unused(directory, safe_name(title), extension), started, track=title)
 
     @property
     def cue_path(self) -> Path:

@@ -19,11 +19,16 @@ class FakePlayer:
         self.recording: str | None = None
         self.relay_retries = 0  # how many failures retry_through_relay rescues
         self.relay_asked = 0
+        self.track_played = 42.0  # seconds of the current track already heard
+        self.track: str | None = None  # the title being kept by begin_track
+        self.saved_tracks: list[str] = []
+        self.save_works = True
 
     # -- Player -----------------------------------------------------------
 
     def play(self, url: str, station_name: str = "") -> None:
         self.recording = None  # as in MpvPlayer: a recording ends with its stream
+        self.track = None
         self.calls.append(("play", url, station_name))
         self.status = replace(
             self.status,
@@ -34,6 +39,7 @@ class FakePlayer:
 
     def stop(self) -> None:
         self.recording = None
+        self.track = None
         self.calls.append(("stop",))
         self.status = replace(self.status, state=PlayerState.IDLE, now_playing=NowPlaying())
 
@@ -63,6 +69,20 @@ class FakePlayer:
             return False
         self.relay_retries -= 1
         self.status = replace(self.status, state=PlayerState.PLAYING, error="")
+        return True
+
+    def begin_track(self) -> float | None:
+        title = self.status.now_playing.title
+        if not title:
+            return None
+        self.track = title
+        return self.track_played
+
+    def save_track(self, path: str) -> bool:
+        track, self.track = self.track, None
+        if track is None or not self.save_works:
+            return False
+        self.saved_tracks.append(path)
         return True
 
     def record(self, path: str | None) -> None:

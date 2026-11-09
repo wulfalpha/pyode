@@ -218,3 +218,108 @@ async def test_unwritable_directory_is_reported(app, player, monkeypatch, tmp_pa
         await pilot.pause()
         assert app._recording is None
         assert player.recording is None
+
+
+# -- one track, from its start ----------------------------------------------------
+
+
+def test_a_track_recording_is_named_after_the_track(tmp_path):
+    first = Recording.for_track("Tycho - Awake", "Groove Salad", ".mp3", 0.0, directory=tmp_path)
+    assert first.path == tmp_path / "Tycho - Awake.mp3"
+    assert first.track == "Tycho - Awake"
+    first.path.write_bytes(b"audio")
+    again = Recording.for_track("Tycho - Awake", "Groove Salad", ".mp3", 0.0, directory=tmp_path)
+    assert again.path.name == "Tycho - Awake (2).mp3"
+
+
+async def test_keeps_the_track_from_its_start_until_the_next(app, player, clock, recordings):
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        _playing(player, "Tycho - Awake")
+        player.track_played = 95.0  # a minute and a half in already
+        await pilot.pause(0.2)
+        await pilot.press("R")
+        await pilot.pause(0.2)
+        assert player.track == "Tycho - Awake"
+        assert _readout(app) == "● REC TRACK 1:35"  # counted from the track's start
+        assert player.recording is None  # nothing streams to disk meanwhile
+        clock.now += 120
+        _playing(player, "Boards of Canada - Dayvan Cowboy")
+        await pilot.pause(0.2)
+        assert player.saved_tracks == [str(recordings / "Tycho - Awake.mp3")]
+        assert app._recording is None
+        assert _readout(app) == ""
+        assert not (recordings / "Tycho - Awake.cue").exists()  # one track needs no list
+
+
+async def test_stopping_by_hand_saves_what_has_played(app, player):
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        _playing(player, "Tycho - Awake")
+        await pilot.press("R")
+        await pilot.press("R")  # either key stops it
+        await pilot.pause(0.2)
+        assert len(player.saved_tracks) == 1
+        assert player.status.state is PlayerState.PLAYING
+
+
+@pytest.mark.parametrize("keys", [("s",), ("down", "p")])
+async def test_stopping_or_changing_station_saves_the_track_so_far(app, player, keys):
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        _playing(player, "Tycho - Awake")
+        await pilot.press("R", *keys)
+        await pilot.pause(0.2)
+        assert len(player.saved_tracks) == 1
+        assert app._recording is None
+
+
+async def test_r_stops_a_track_recording_too(app, player):
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        _playing(player, "Tycho - Awake")
+        await pilot.press("R", "r")
+        await pilot.pause(0.2)
+        assert len(player.saved_tracks) == 1
+        assert player.recording is None  # it stopped, rather than starting the other kind
+
+
+async def test_stations_without_titles_point_to_plain_recording(app, player):
+    async with app.run_test() as pilot:
+        toasts = []
+        app.notify = lambda message, **kwargs: toasts.append(message)
+        await pilot.press("p")
+        _playing(player, "")
+        await pilot.press("R")
+        await pilot.pause()
+        assert app._recording is None
+        assert any("Press r" in toast for toast in toasts)
+
+
+async def test_a_failed_save_is_reported(app, player):
+    async with app.run_test() as pilot:
+        toasts = []
+        app.notify = lambda message, **kwargs: toasts.append(message)
+        player.save_works = False
+        await pilot.press("p")
+        _playing(player, "Tycho - Awake")
+        await pilot.press("R", "R")
+        await pilot.pause()
+        assert any("Could not save Tycho - Awake" in toast for toast in toasts)
+
+
+async def test_a_stream_failure_saves_at_once_and_does_not_carry_on(app, player, monkeypatch):
+    import pyode.app
+
+    monkeypatch.setattr(pyode.app, "RECONNECT_DELAYS", (0.01,))
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        _playing(player, "Tycho - Awake")
+        await pilot.pause(0.2)
+        await pilot.press("R")
+        app._playing_since = 0.0  # it had been playing a while
+        player.status = replace(player.status, state=PlayerState.ERROR, error="dropped")
+        await pilot.pause(0.3)
+        assert len(player.saved_tracks) == 1
+        assert app._recording is None
+        assert player.recording is None  # the reconnect did not start a new file

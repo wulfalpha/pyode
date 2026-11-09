@@ -139,6 +139,8 @@ class Player(Protocol):
     def adjust_volume(self, delta: int) -> None: ...
     def toggle_mute(self) -> None: ...
     def record(self, path: str | None) -> None: ...
+    def begin_track(self) -> float | None: ...
+    def save_track(self, path: str) -> bool: ...
     def retry_through_relay(self) -> bool: ...
     def close(self) -> None: ...
 
@@ -210,6 +212,12 @@ class MpvPlayer:
         self._closing = False
         self._meter = meter
         self._recording = False
+        # Recording the current track out of mpv's cache of what has already
+        # played: the playback position, where the current title began, and
+        # the track being kept (its start and title) once begin_track is called.
+        self._time_pos = 0.0
+        self._title_since = 0.0
+        self._track: tuple[float, str] | None = None
         # SHOUTcast v1 stations that need the ICY relay; see pyode.icyrelay.
         self._relay = icyrelay.IcyRelay()
         self._needs_relay: set[str] = set()
@@ -286,8 +294,20 @@ class MpvPlayer:
         @self._mpv.property_observer("metadata")
         def _on_metadata(_name: str, value: dict | None) -> None:
             with self._lock:
-                self._now = _parse_metadata(value, self._station)
+                now = _parse_metadata(value, self._station)
+                # mpv applies a new ICY title when that point is heard, not
+                # when it is downloaded, so this is where the track began.
+                # The first title after tuning in names a track already under
+                # way, which began before anything was cached: start at 0.
+                if now.title != self._now.title:
+                    self._title_since = self._time_pos if self._now.title else 0.0
+                self._now = now
             self._emit()
+
+        @self._mpv.property_observer("time-pos")
+        def _on_time_pos(_name: str, value: float | None) -> None:
+            with self._lock:
+                self._time_pos = float(value or 0.0)
 
         @self._mpv.property_observer("core-idle")
         def _on_core_idle(_name: str, value: bool | None) -> None:
@@ -412,6 +432,8 @@ class MpvPlayer:
             self._codec = ""
             self._bitrate_bps = None
             self._cache_seconds = 0.0
+            self._time_pos = 0.0
+            self._title_since = 0.0
         try:
             self._mpv.play(target)
             self._mpv.pause = False  # a previous pause would otherwise carry over
@@ -486,6 +508,44 @@ class MpvPlayer:
             return
         self._recording = bool(path)
 
+    def begin_track(self) -> float | None:
+        """Start keeping the current track, from the moment its title began.
+
+        Nothing is written yet: mpv's cache already holds the track, so
+        `save_track` writes it out in one go once it is over -- cut exactly at
+        the next title, which writing as it played could not do, since mpv
+        downloads ahead of what is heard.  Returns how many seconds of the
+        track had already played, or None with no track title to go by.
+        """
+        with self._lock:
+            title, start, now = self._now.title, self._title_since, self._time_pos
+        if not title:
+            return None
+        self._track = (start, title)
+        return max(0.0, now - start)
+
+    def save_track(self, path: str) -> bool:
+        """Write the kept track to `path`: from its start to the next title,
+        or to now if it is still playing.  Returns whether it was written."""
+        track, self._track = self._track, None
+        if track is None:
+            return False
+        start, title = track
+        with self._lock:
+            ended = self._now.title != title
+            end = self._title_since if ended else self._time_pos
+        try:
+            # The cache only reaches back so far; start no earlier than it does.
+            ranges = (self._mpv._get_property("demuxer-cache-state") or {}).get("seekable-ranges")
+            if ranges:
+                start = max(start, float(ranges[0]["start"]))
+            # Bounded, and read from memory, so this returns almost at once.
+            self._mpv.command("dump-cache", f"{start:.3f}", f"{end:.3f}", path)
+        except _MPV_ERRORS:
+            log.warning("could not save the track", exc_info=True)
+            return False
+        return True
+
     def retry_through_relay(self) -> bool:
         """After a failure, try the same station again through the ICY relay.
 
@@ -512,6 +572,7 @@ class MpvPlayer:
     def _end_recording(self) -> None:
         # stream-record is an option, so it would carry over to the next
         # stream and overwrite the file.  Every recording ends with its stream.
+        self._track = None  # its cache goes with the stream
         if self._recording:
             self.record(None)
 
