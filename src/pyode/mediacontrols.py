@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """The operating system's media controls: Now Playing panels and media keys.
 
-On Linux that is MPRIS, in `pyode.mpris`.  The rest of this module is macOS.
+On Linux that is MPRIS, in `pyode.mpris`; on Windows, the System Media
+Transport Controls, in `pyode.smtc`.  The rest of this module is macOS.
 
 libmpv has its own macOS integration (the ``media-controls`` option), but it
 only registers when mpv itself is the application; embedded through libmpv it
@@ -204,6 +205,10 @@ def create(commands: Commands, *, enabled: bool = True) -> MediaSession:
             from pyode.mpris import MprisSession
 
             return MprisSession(commands)
+        if sys.platform == "win32":
+            from pyode.smtc import SmtcSession
+
+            return SmtcSession(commands)
     except ImportError as exc:
         log.info("no media controls, a binding is missing: %s", exc)
     except Exception:

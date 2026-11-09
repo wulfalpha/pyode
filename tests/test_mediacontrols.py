@@ -48,7 +48,7 @@ def test_buffering_still_shows_the_station():
 def test_disabled_or_unsupported_platforms_get_a_null_session(monkeypatch):
     commands = mediacontrols.Commands(*(lambda *_: None,) * 7)
     assert isinstance(real_create(commands, enabled=False), mediacontrols.NullSession)
-    monkeypatch.setattr(mediacontrols.sys, "platform", "win32")
+    monkeypatch.setattr(mediacontrols.sys, "platform", "sunos5")
     assert isinstance(real_create(commands), mediacontrols.NullSession)
 
 
