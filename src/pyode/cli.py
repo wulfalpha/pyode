@@ -129,6 +129,7 @@ def _run_tui(
     config_path: Path,
     save_history: bool = True,
     media_controls: bool = True,
+    sleep_minutes: float | None = None,
 ) -> int:
     from pyode.app import PyodeApp
 
@@ -146,6 +147,7 @@ def _run_tui(
         config_path=config_path,
         save_history=save_history,
         media_controls=media_controls,
+        sleep_minutes=sleep_minutes,
     ).run()
     return 0
 
@@ -181,6 +183,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="hide the signal meter (saved)",
     )
     parser.set_defaults(visualiser=None)
+    parser.add_argument(
+        "--sleep",
+        type=float,
+        metavar="MINUTES",
+        help="stop playing after MINUTES, fading out over the last 30 seconds",
+    )
     parser.add_argument(
         "--no-media-keys",
         action="store_false",
@@ -230,6 +238,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.volume is not None and not 0 <= args.volume <= 100:
         parser.error("--volume must be between 0 and 100")
+    if args.sleep is not None and not 0 < args.sleep <= 24 * 60:
+        parser.error("--sleep must be more than 0 and at most 1440 minutes")
 
     if args.show_libmpv:
         # Exits non-zero when libmpv is missing, so it doubles as a check that
@@ -272,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         config_path=config_path,
         save_history=prefs.history,
         media_controls=args.media_controls,
+        sleep_minutes=args.sleep,
     )
 
 

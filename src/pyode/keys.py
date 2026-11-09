@@ -31,6 +31,7 @@ CONTROLS = (
     Control("plus,equals_sign", "volume(5)", "Louder", "+ / ="),
     Control("minus", "volume(-5)", "Quieter", "-"),
     Control("t", "history", "Track history", "t"),
+    Control("z", "sleep", "Sleep timer", "z"),
     Control("c", "copy_title", "Copy track title", "c"),
     Control("v", "toggle_visualiser", "Visualiser", "v"),
     Control("slash", "search", "Search directory", "/"),

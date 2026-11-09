@@ -37,6 +37,12 @@ TopBar #wordmark {
     width: 1fr;
 }
 
+TopBar #sleep {
+    width: auto;
+    color: $dial;
+    margin-right: 2;
+}
+
 TopBar #lamp {
     width: auto;
     color: $quiet;

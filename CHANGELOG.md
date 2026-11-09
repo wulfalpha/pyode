@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Sleep timer: `z` steps through 15, 30, 45, 60 and 90 minutes, then off,
+  with the time left in the top bar. The volume fades out over the last 30
+  seconds, then playback stops and the volume is restored. Touching the
+  volume during the fade cancels it. `--sleep MINUTES` starts with a timer
+  of any length for that run.
+
 ## 0.5.0
 
 ### Added

@@ -34,6 +34,7 @@ from pyode.config import Preferences
 from pyode.history import TrackHistory
 from pyode.keys import CONTROLS, bindings, help_text, table_action
 from pyode.player import MpvPlayer, PlayerState, PlayerStatus
+from pyode.sleep import SleepTimer, next_step
 from pyode.stations import LibraryConflictError, Station, StationLibrary
 from pyode.widgets import ControlBar, DialRule, NowPlaying, SignalMeter, TopBar
 
@@ -418,6 +419,7 @@ class PyodeApp(App[None]):
         history: TrackHistory | None = None,
         save_history: bool = True,
         media_controls: bool = True,
+        sleep_minutes: float | None = None,
     ) -> None:
         super().__init__()
         self.library = library if library is not None else StationLibrary.load()
@@ -461,6 +463,12 @@ class PyodeApp(App[None]):
         # never mounts the app never touches the system's media controls.
         self._media_controls = media_controls
         self._media: mediacontrols.MediaSession = mediacontrols.NullSession()
+        # The sleep timer.  `_sleep_base` is the volume from before the fade
+        # began, to put back afterwards; it is set only while fading.
+        self._clock = time.monotonic
+        self._sleep_minutes = sleep_minutes
+        self._sleep: SleepTimer | None = None
+        self._sleep_base: int | None = None
 
     # -- layout -----------------------------------------------------------
 
@@ -503,6 +511,8 @@ class PyodeApp(App[None]):
             ),
             enabled=self._media_controls,
         )
+        if self._sleep_minutes:
+            self._set_sleep(self._sleep_minutes)
         if self._autoplay is not None:
             self._start(self._autoplay)
 
@@ -577,6 +587,10 @@ class PyodeApp(App[None]):
     def _tick(self) -> None:
         # Deliver any media keys pressed since the last tick.
         self._media.pump()
+        try:
+            self._sleep_tick()
+        except NoMatches:
+            return
         try:
             meter = self.query_one(SignalMeter)
         except NoMatches:
@@ -795,7 +809,7 @@ class PyodeApp(App[None]):
             return
         try:
             Preferences(
-                self.keymap, self.player.status.volume, self._visualiser, self.history.persist
+                self.keymap, self._resting_volume, self._visualiser, self.history.persist
             ).save(self._config_path)
         except OSError as exc:
             if report:
@@ -984,6 +998,7 @@ class PyodeApp(App[None]):
             self.action_stop()
 
     def _media_volume(self, value: int) -> None:
+        self._wake()
         self.player.set_volume(value)
         self._save_volume_later()
 
@@ -1003,10 +1018,63 @@ class PyodeApp(App[None]):
             here = self.query_one("#station-table", StationTable).cursor_row - delta
         self._start(self._visible[(here + delta) % len(self._visible)])
 
+    # -- sleep timer --------------------------------------------------------
+
+    @property
+    def _resting_volume(self) -> int:
+        """The volume to save: never a point partway through the fade."""
+        return self._sleep_base if self._sleep_base is not None else self.player.status.volume
+
+    def action_sleep(self) -> None:
+        minutes = next_step(self._sleep.minutes if self._sleep else None)
+        self._set_sleep(minutes)
+        self.notify(f"Sleeping in {minutes} minutes." if minutes else "Sleep timer off.")
+
+    def _set_sleep(self, minutes: float | None) -> None:
+        self._end_fade()
+        self._sleep = SleepTimer.start(minutes, self._clock()) if minutes else None
+        self._sleep_tick()
+
+    def _end_fade(self) -> None:
+        """Put the volume back where it was before the fade, if one began."""
+        if self._sleep_base is not None:
+            self.player.set_volume(self._sleep_base)
+            self._sleep_base = None
+
+    def _wake(self) -> None:
+        """Touching the volume during the fade means someone is still awake."""
+        if self._sleep_base is not None:
+            self._set_sleep(None)
+            self.notify("Sleep timer off.")
+
+    def _sleep_tick(self) -> None:
+        top = self.query_one(TopBar)
+        timer = self._sleep
+        if timer is None:
+            top.set_sleep("")
+            return
+        now = self._clock()
+        if timer.expired(now):
+            self._set_sleep(None)  # also restores the volume, ready for next time
+            if self._preview_session:
+                self.stop_preview()
+            elif self._playing is not None:
+                self.action_stop()
+            self.notify("Sleep timer: stopped playback.")
+            return
+        top.set_sleep(timer.label(now))
+        if timer.fading(now) and self.player.status.is_active:
+            if self._sleep_base is None:
+                self._sleep_base = self.player.status.volume
+            volume = timer.volume(self._sleep_base, now)
+            if volume != self.player.status.volume:
+                self.player.set_volume(volume)
+
     def action_toggle_mute(self) -> None:
         self.player.toggle_mute()
 
     def action_volume(self, delta: int) -> None:
+        self._wake()
         self.player.adjust_volume(delta)
         self._save_volume_later()
 
