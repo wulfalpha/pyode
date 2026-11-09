@@ -5,7 +5,16 @@ Playback itself is verified by hand against real streams; mocking libmpv would
 only assert that the mock behaves like the mock.
 """
 
-from pyode.player import NowPlaying, PlayerState, PlayerStatus, _clamp, _parse_metadata
+import pytest
+
+from pyode.player import (
+    NowPlaying,
+    PlayerState,
+    PlayerStatus,
+    _clamp,
+    _parse_metadata,
+    undo_double_utf8,
+)
 
 
 def test_display_prefers_track_title():
@@ -64,3 +73,33 @@ def test_is_active_excludes_idle_and_error():
     assert PlayerStatus(state=PlayerState.PAUSED).is_active
     assert not PlayerStatus(state=PlayerState.IDLE).is_active
     assert not PlayerStatus(state=PlayerState.ERROR).is_active
+
+
+# -- titles sent double-encoded ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sent", "shown"),
+    [
+        ("BachliÃ±ski", "Bachliñski"),  # SLAY Radio, as it arrives
+        ("RÃ¶yksopp", "Röyksopp"),
+        ("Ã‰dith Piaf", "Édith Piaf"),
+        ("Itâ€™s Alright", "It’s Alright"),  # mangled via Windows-1252
+        ("Â©2024", "©2024"),
+    ],
+)
+def test_double_encoded_titles_are_repaired(sent, shown):
+    assert undo_double_utf8(sent) == shown
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["Visa Röster - Wizball", "Café del Mar", "Motörhead", "Sigur Rós", "ÄÖÜ", "Ã", "plain"],
+)
+def test_genuine_titles_are_left_alone(title):
+    assert undo_double_utf8(title) == title
+
+
+def test_metadata_titles_and_names_are_repaired():
+    now = _parse_metadata({"icy-title": "RÃ¶yksopp - Eple", "icy-name": "CafÃ© FM"}, "x")
+    assert (now.title, now.stream_name) == ("Röyksopp - Eple", "Café FM")
