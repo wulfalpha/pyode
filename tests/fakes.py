@@ -16,10 +16,12 @@ class FakePlayer:
         self.calls: list[tuple] = []
         self._level = level
         self.closed = False
+        self.recording: str | None = None
 
     # -- Player -----------------------------------------------------------
 
     def play(self, url: str, station_name: str = "") -> None:
+        self.recording = None  # as in MpvPlayer: a recording ends with its stream
         self.calls.append(("play", url, station_name))
         self.status = replace(
             self.status,
@@ -29,6 +31,7 @@ class FakePlayer:
         )
 
     def stop(self) -> None:
+        self.recording = None
         self.calls.append(("stop",))
         self.status = replace(self.status, state=PlayerState.IDLE, now_playing=NowPlaying())
 
@@ -50,7 +53,12 @@ class FakePlayer:
         self.calls.append(("toggle_mute",))
         self.status = replace(self.status, muted=not self.status.muted)
 
+    def record(self, path: str | None) -> None:
+        self.calls.append(("record", path))
+        self.recording = path
+
     def close(self) -> None:
+        self.recording = None
         self.closed = True
 
     def level(self) -> float | None:

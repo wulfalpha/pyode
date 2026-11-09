@@ -162,6 +162,7 @@ needle marks where the playing station falls in your library.
 | `m` | Mute |
 | `t` | Track history |
 | `z` | Sleep timer: 15, 30, 45, 60, 90 minutes, off |
+| `r` | Record the playing station, or stop recording |
 | `c` | Copy the current track title |
 | `v` | Show or hide the signal meter |
 | `/` | Browse or search the directory |
@@ -208,6 +209,27 @@ that drops while paused waits for you to press space.
 If a station from the directory fails to start at all, pyode looks it up
 again by its directory ID. Station addresses change often; when the directory
 has a new one, pyode saves it to your library and tries again.
+
+### Recording
+
+Press `r` while a station is playing to record it, and `r` again to stop. The
+top bar shows `● REC` and how long it has run. pyode copies the stream as it
+arrives, without re-encoding, so the recording sounds exactly like the
+broadcast, in the station's own format: MP3, AAC (`.aac`), Ogg, FLAC, or
+Matroska (`.mka`) for anything else.
+
+Beside each recording is a `.cue` track list, with one entry for every title
+the station announced and when it began. Players that read cue sheets, such
+as foobar2000 and mpv, can jump from track to track while the audio stays one
+unbroken file. Stations announce titles a little early or late, so the marks
+are approximate.
+
+Recordings go to `~/Music/pyode`, named after the station and the time, for
+example `SomaFM Groove Salad 2026-11-08 21.30.mp3`. Set `PYODE_RECORDINGS_DIR`
+to save them somewhere else. Stopping, changing station, or quitting ends the
+recording. If the stream drops and pyode reconnects, the recording carries on
+in a new file. Both the audio and the track list stay usable if pyode is
+closed unexpectedly.
 
 ### Sleep timer
 

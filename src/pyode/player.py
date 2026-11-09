@@ -138,6 +138,7 @@ class Player(Protocol):
     def set_volume(self, value: int) -> None: ...
     def adjust_volume(self, delta: int) -> None: ...
     def toggle_mute(self) -> None: ...
+    def record(self, path: str | None) -> None: ...
     def close(self) -> None: ...
 
     @property
@@ -184,6 +185,7 @@ class MpvPlayer:
         self._cache_seconds = 0.0
         self._closing = False
         self._meter = meter
+        self._recording = False
 
         self._mpv = mpv.MPV(
             video=False,
@@ -366,6 +368,7 @@ class MpvPlayer:
         self._emit()
 
     def play(self, url: str, station_name: str = "") -> None:
+        self._end_recording()
         with self._lock:
             self._url = url
             self._station = station_name
@@ -385,6 +388,7 @@ class MpvPlayer:
         self._emit()
 
     def stop(self) -> None:
+        self._end_recording()
         with self._lock:
             self._url = None
             self._station = ""
@@ -435,7 +439,27 @@ class MpvPlayer:
             self._failed("change mute state", exc)
         # the `mute` observer emits for us
 
+    def record(self, path: str | None) -> None:
+        """Copy the stream into `path` as it plays, or stop with None.
+
+        mpv's ``stream-record`` writes the demuxed packets as they are, so
+        nothing is re-encoded; the container follows the file extension.
+        """
+        try:
+            self._mpv["stream-record"] = path or ""
+        except _MPV_ERRORS as exc:
+            self._failed("record", exc)
+            return
+        self._recording = bool(path)
+
+    def _end_recording(self) -> None:
+        # stream-record is an option, so it would carry over to the next
+        # stream and overwrite the file.  Every recording ends with its stream.
+        if self._recording:
+            self.record(None)
+
     def close(self) -> None:
+        self._end_recording()  # closes the file cleanly before mpv goes
         with self._lock:
             self._closing = True
         try:

@@ -9,6 +9,10 @@
   seconds, then playback stops and the volume is restored. Touching the
   volume during the fade cancels it. `--sleep MINUTES` starts with a timer
   of any length for that run.
+- Recording: `r` records the playing station without re-encoding, to
+  `~/Music/pyode` (or `PYODE_RECORDINGS_DIR`), with a `.cue` track list of
+  every title announced. Stopping or changing station ends it; a reconnect
+  after a drop continues in a new file.
 
 ## 0.5.0
 
