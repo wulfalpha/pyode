@@ -29,6 +29,7 @@ from __future__ import annotations
 import ctypes.util
 import logging
 import os
+import platform
 import shutil
 import sys
 from collections.abc import Iterator
@@ -179,7 +180,7 @@ def _unix_dirs() -> Iterator[Path]:
         for entry in os.environ.get(variable, "").split(os.pathsep):
             if entry:
                 yield Path(entry)
-    machine = os.uname().machine
+    machine = platform.machine()  # os.uname() does not exist on Windows
     yield Path(f"/usr/lib/{machine}-linux-gnu")  # Debian multiarch
     yield Path("/usr/lib64")  # Fedora, openSUSE
     yield Path("/usr/lib")
