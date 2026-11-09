@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Check real pip and uv tool installs without touching the user's tools.
 
-Usage: python scripts/check_install.py dist/pyode_radio-0.4.0-py3-none-any.whl
+Usage: python scripts/check_install.py dist/pyode_radio-0.5.0-py3-none-any.whl
 Requires uv on PATH. No libmpv, audio hardware, or live radio is needed.
 """
 
