@@ -123,6 +123,7 @@ pyode --history                # print recently heard tracks and exit
 pyode --libmpv                 # report where libmpv was looked for, and exit
 pyode --no-visualiser          # start with the signal meter hidden
 pyode --no-media-keys          # leave media keys and Now Playing to other apps
+pyode --sleep 45               # stop playing after 45 minutes
 pyode --keymap vim              # save Vim controls (arrows remain available)
 pyode --keymap standard         # return to the standard controls
 pyode --visualiser              # show the signal meter again
@@ -160,6 +161,7 @@ needle marks where the playing station falls in your library.
 | `+` / `-` | Volume |
 | `m` | Mute |
 | `t` | Track history |
+| `z` | Sleep timer: 15, 30, 45, 60, 90 minutes, off |
 | `c` | Copy the current track title |
 | `v` | Show or hide the signal meter |
 | `/` | Browse or search the directory |
@@ -206,6 +208,15 @@ that drops while paused waits for you to press space.
 If a station from the directory fails to start at all, pyode looks it up
 again by its directory ID. Station addresses change often; when the directory
 has a new one, pyode saves it to your library and tries again.
+
+### Sleep timer
+
+Press `z` to stop playing after 15 minutes; press it again for 30, 45, 60 and
+90, and once more to turn it off. The time left shows in the top bar. Over the
+last 30 seconds the volume fades out, then playback stops and the volume goes
+back to where it was, so the next station does not start silent. Touching the
+volume during the fade cancels the timer. `pyode --sleep 20` starts with a
+timer of any length; like `--no-media-keys`, it is not saved.
 
 ### Media keys and Now Playing
 
