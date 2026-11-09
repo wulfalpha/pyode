@@ -25,6 +25,9 @@
   A plain `http://` station that fails before starting is retried once
   through a relay on `127.0.0.1` that rewrites that one line; pyode then
   remembers to use it for that station.
+- Track titles that a station sends encoded as UTF-8 twice are repaired, so
+  SLAY Radio shows "Bachliñski" rather than "BachliÃ±ski". This also applies
+  to the track history and recording track lists.
 - The libmpv search no longer calls `os.uname()`, which Windows lacks.
 
 ## 0.5.0

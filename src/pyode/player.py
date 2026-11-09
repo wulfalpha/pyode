@@ -146,14 +146,37 @@ class Player(Protocol):
     def status(self) -> PlayerStatus: ...
 
 
+def undo_double_utf8(text: str) -> str:
+    """Repair text that was encoded as UTF-8 twice.
+
+    Some stations' playout software takes UTF-8 bytes for Latin-1 or
+    Windows-1252 and encodes them again, so "Röster" goes out as "RÃ¶ster".
+    The damage is in the bytes the station sends, so no decoder setting can
+    undo it; this undoes one round.
+
+    It only acts when the text could not plausibly be meant: every character
+    must fit in a single byte, at least one must be non-ASCII, and those bytes
+    must form valid UTF-8 -- which ordinary accented text almost never does.
+    """
+    if text.isascii():
+        return text
+    for codec in ("latin-1", "cp1252"):
+        try:
+            repaired = text.encode(codec).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        return repaired
+    return text
+
+
 def _parse_metadata(raw: dict | None, station: str) -> NowPlaying:
     meta = {str(k).lower(): "" if v is None else str(v) for k, v in (raw or {}).items()}
     bitrate = meta.get("icy-br", "").strip()
     return NowPlaying(
         station=station,
-        title=meta.get("icy-title", "").strip(),
-        stream_name=meta.get("icy-name", "").strip(),
-        genre=meta.get("icy-genre", "").strip(),
+        title=undo_double_utf8(meta.get("icy-title", "").strip()),
+        stream_name=undo_double_utf8(meta.get("icy-name", "").strip()),
+        genre=undo_double_utf8(meta.get("icy-genre", "").strip()),
         bitrate=int(bitrate) if bitrate.isdigit() else None,
     )
 
