@@ -60,9 +60,10 @@ class TopBar(Horizontal):
         """Time left on the sleep timer, or nothing when it is off."""
         self._readout("sleep", f"sleep {label}" if label else "")
 
-    def set_recording(self, label: str) -> None:
+    def set_recording(self, label: str, *, track: bool = False) -> None:
         """How long the recording has run, or nothing when not recording."""
-        self._readout("rec", f"● REC {label}" if label else "")
+        kind = "REC TRACK" if track else "REC"
+        self._readout("rec", f"● {kind} {label}" if label else "")
 
     def update(self, *, station_count: int, live: bool) -> None:
         stations = "station" if station_count == 1 else "stations"

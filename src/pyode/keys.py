@@ -33,6 +33,7 @@ CONTROLS = (
     Control("t", "history", "Track history", "t"),
     Control("z", "sleep", "Sleep timer", "z"),
     Control("r", "record", "Record / stop recording", "r"),
+    Control("R", "record_track", "Record this track, from its start", "R"),
     Control("c", "copy_title", "Copy track title", "c"),
     Control("v", "toggle_visualiser", "Visualiser", "v"),
     Control("slash", "search", "Search directory", "/"),

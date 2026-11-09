@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Record just this track: `R` saves the song playing now from where it began,
+  even partway through, and stops by itself at the next track. pyode keeps the
+  last stretch of the stream in memory to make this possible. The file is
+  named after the track.
+
 ## 0.6.0
 
 ### Added

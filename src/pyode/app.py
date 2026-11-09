@@ -635,9 +635,16 @@ class PyodeApp(App[None]):
         if station is not None and status.now_playing.title:
             self._record(station.name, status.now_playing.title)
         if self._recording is not None:
-            if status.state is PlayerState.ERROR and self._reconnect_timer is None:
+            recording = self._recording
+            if recording.track:
+                # One track: over when the station names the next one, or
+                # when the stream fails -- saved now, while mpv still has it.
+                title = status.now_playing.title
+                if status.state is PlayerState.ERROR or (title and title != recording.track):
+                    self._finish_recording()
+            elif status.state is PlayerState.ERROR and self._reconnect_timer is None:
                 self._finish_recording()  # dropped for good: nothing more is coming
-            elif self._recording.mark(status.now_playing.title, self._clock()):
+            elif recording.mark(status.now_playing.title, self._clock()):
                 self._write_cue()
         reconnecting = self._reconnect_timer is not None
         self.query_one(NowPlaying).update(status, station, self._notice)
@@ -896,7 +903,7 @@ class PyodeApp(App[None]):
         self._playing_since = None
         # A reconnect carries a recording on into a new file; anything the
         # user starts ends it, since the player closes it with the stream.
-        carried = self._recording if not user else None
+        carried = self._recording if not user and not self._track_recording else None
         if carried is None:
             self._finish_recording()
         self.player.play(station.url, station.name)
@@ -1044,21 +1051,56 @@ class PyodeApp(App[None]):
 
     # -- recording ------------------------------------------------------------
 
-    def action_record(self) -> None:
-        if self._recording is not None:
-            self._finish_recording()
-            return
+    @property
+    def _track_recording(self) -> bool:
+        return self._recording is not None and bool(self._recording.track)
+
+    def _recording_dir(self) -> Path | None:
+        """Where recordings go, created if need be; None (and said) if it cannot be."""
         station = self._playing_station()
-        status = self.player.status
-        if station is None or status.state is not PlayerState.PLAYING:
+        if station is None or self.player.status.state is not PlayerState.PLAYING:
             self.notify("Recording starts once a station is playing.")
-            return
+            return None
         directory = recorder.default_dir()
         try:
             directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             self.notify(f"Could not create {directory}: {exc}", severity="error")
+            return None
+        return directory
+
+    def action_record_track(self) -> None:
+        """Keep the track playing now, from its start, until the next title."""
+        if self._recording is not None:
+            self._finish_recording()
             return
+        directory = self._recording_dir()
+        if directory is None:
+            return
+        station = self._playing_station()
+        status = self.player.status
+        played = self.player.begin_track()
+        if played is None:
+            self.notify("This station does not name its tracks. Press r to record instead.")
+            return
+        self._recording = recorder.Recording.for_track(
+            status.now_playing.title,
+            station.name,
+            recorder.extension_for(status.now_playing.codec),
+            self._clock() - played,  # it began before the key was pressed
+            directory=directory,
+        )
+        self.notify(f"Recording {status.now_playing.title} until the next track.")
+
+    def action_record(self) -> None:
+        if self._recording is not None:
+            self._finish_recording()
+            return
+        directory = self._recording_dir()
+        if directory is None:
+            return
+        station = self._playing_station()
+        status = self.player.status
         extension = recorder.extension_for(status.now_playing.codec)
         self._begin_recording(station.name, extension, directory)
         self._recording.mark(status.now_playing.title, self._clock())
@@ -1082,7 +1124,15 @@ class PyodeApp(App[None]):
         recording, self._recording = self._recording, None
         if recording is None:
             return
-        self.player.record(None)
+        if recording.track:
+            if not self.player.save_track(str(recording.path)):
+                if report:
+                    self.notify(f"Could not save {recording.track}.", severity="error")
+                else:  # quitting: no screen left to say so on
+                    log.warning("could not save %s on quitting", recording.path)
+                return
+        else:
+            self.player.record(None)
         if report:
             length = recording.label(self._clock())
             self.notify(f"Saved {recording.path.name} ({length}).", title="Recording")
@@ -1100,7 +1150,7 @@ class PyodeApp(App[None]):
     def _recording_tick(self) -> None:
         recording = self._recording
         label = recording.label(self._clock()) if recording is not None else ""
-        self.query_one(TopBar).set_recording(label)
+        self.query_one(TopBar).set_recording(label, track=self._track_recording)
 
     # -- sleep timer --------------------------------------------------------
 
