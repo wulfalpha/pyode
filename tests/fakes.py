@@ -70,16 +70,18 @@ class FakeMediaSession:
         self.pending: list[str] = []
         self.closed = False
 
-    def press(self, name: str) -> None:
-        self.pending.append(name)
+    def press(self, name: str, *args) -> None:
+        self.pending.append((name, args))
 
-    def update(self, info) -> None:
+    def update(self, info, volume: int = 100) -> None:
+        self.volume = volume
         if not self.shown or self.shown[-1] != info:
             self.shown.append(info)
 
     def pump(self) -> None:
         while self.pending:
-            getattr(self.commands, self.pending.pop(0))()
+            name, args = self.pending.pop(0)
+            getattr(self.commands, name)(*args)
 
     def close(self) -> None:
         self.closed = True

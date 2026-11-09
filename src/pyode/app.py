@@ -499,6 +499,7 @@ class PyodeApp(App[None]):
                 stop=self._media_stop,
                 next=lambda: self._step_station(1),
                 previous=lambda: self._step_station(-1),
+                set_volume=self._media_volume,
             ),
             enabled=self._media_controls,
         )
@@ -617,7 +618,9 @@ class PyodeApp(App[None]):
             self._record(station.name, status.now_playing.title)
         reconnecting = self._reconnect_timer is not None
         self.query_one(NowPlaying).update(status, station, self._notice)
-        self._media.update(mediacontrols.describe(status, station.name if station else None))
+        self._media.update(
+            mediacontrols.describe(status, station.name if station else None), status.volume
+        )
         self.query_one(ControlBar).update(status, station, reconnecting=reconnecting)
         self.query_one(TopBar).update(
             station_count=len(self.library), live=status.state.name == "PLAYING"
@@ -979,6 +982,10 @@ class PyodeApp(App[None]):
             self.stop_preview()
         else:
             self.action_stop()
+
+    def _media_volume(self, value: int) -> None:
+        self.player.set_volume(value)
+        self._save_volume_later()
 
     def _step_station(self, delta: int) -> None:
         """Play the next or previous station in the list, wrapping at the ends.

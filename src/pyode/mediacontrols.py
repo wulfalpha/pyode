@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""The operating system's media controls: macOS Now Playing and media keys.
+"""The operating system's media controls: Now Playing panels and media keys.
+
+On Linux that is MPRIS, in `pyode.mpris`.  The rest of this module is macOS.
 
 libmpv has its own macOS integration (the ``media-controls`` option), but it
 only registers when mpv itself is the application; embedded through libmpv it
@@ -75,10 +77,11 @@ class Commands:
     stop: Callable[[], None]
     next: Callable[[], None]
     previous: Callable[[], None]
+    set_volume: Callable[[int], None]  # 0-100; macOS has no use for it
 
 
 class MediaSession(Protocol):
-    def update(self, info: NowPlayingInfo | None) -> None: ...
+    def update(self, info: NowPlayingInfo | None, volume: int = 100) -> None: ...
     def pump(self) -> None: ...
     def close(self) -> None: ...
 
@@ -86,7 +89,7 @@ class MediaSession(Protocol):
 class NullSession:
     """Media controls on a platform pyode has no integration for."""
 
-    def update(self, info: NowPlayingInfo | None) -> None:
+    def update(self, info: NowPlayingInfo | None, volume: int = 100) -> None:
         pass
 
     def pump(self) -> None:
@@ -146,7 +149,7 @@ class MacSession:
         command.setEnabled_(True)
         self._targets.append((command, command.addTargetWithHandler_(handler)))
 
-    def update(self, info: NowPlayingInfo | None) -> None:
+    def update(self, info: NowPlayingInfo | None, volume: int = 100) -> None:
         if info == self._last:
             return
         self._last = info
@@ -192,12 +195,17 @@ class MacSession:
 
 def create(commands: Commands, *, enabled: bool = True) -> MediaSession:
     """The best media session this platform supports."""
-    if not enabled or sys.platform != "darwin":
+    if not enabled:
         return NullSession()
     try:
-        return MacSession(commands)
-    except ImportError:
-        log.info("PyObjC's MediaPlayer bindings are missing; no Now Playing integration")
+        if sys.platform == "darwin":
+            return MacSession(commands)
+        if sys.platform.startswith("linux"):
+            from pyode.mpris import MprisSession
+
+            return MprisSession(commands)
+    except ImportError as exc:
+        log.info("no media controls, a binding is missing: %s", exc)
     except Exception:
-        log.exception("could not register with Now Playing")
+        log.exception("could not register with the system's media controls")
     return NullSession()

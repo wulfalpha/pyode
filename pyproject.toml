@@ -26,6 +26,7 @@ dependencies = [
     "platformdirs>=4.11",
     # Now Playing and the media keys; see pyode.mediacontrols.
     "pyobjc-framework-MediaPlayer>=11; sys_platform == 'darwin'",
+    "dbus-fast>=2.24; sys_platform == 'linux'",
 ]
 
 [project.urls]
@@ -42,6 +43,8 @@ dev = [
     "pytest-asyncio>=1.0",
     "textual-dev>=1.7",
     "ruff>=0.14",
+    # Everywhere, not just Linux, so the MPRIS tests run on a Mac too.
+    "dbus-fast>=2.24",
 ]
 
 [build-system]

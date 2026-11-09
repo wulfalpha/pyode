@@ -21,13 +21,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install libmpv
+      - name: Install libmpv and dbus
         # pyode loads libmpv through ctypes. The tests use a fake player and
         # pass without it, but installing it means CI exercises the same import
-        # path a user hits.
+        # path a user hits. dbus-daemon gives the MPRIS tests a private bus;
+        # without it they skip.
         run: |
           sudo apt-get update
           sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv1
+          sudo apt-get install -y dbus
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
