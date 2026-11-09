@@ -4,11 +4,15 @@
 import asyncio
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
+if sys.platform == "win32":
+    # dbus-fast needs Unix socket features Windows lacks, even to import.
+    pytest.skip("D-Bus is not used on Windows", allow_module_level=True)
 pytest.importorskip("dbus_fast")
 
 from dbus_fast import Variant  # noqa: E402
