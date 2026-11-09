@@ -18,6 +18,15 @@
   stations, as on macOS and Linux. On Windows this adds a dependency on the
   pywinrt `winrt-Windows.Media` bindings.
 
+### Fixed
+
+- SHOUTcast v1 stations such as SLAY Radio play again with libmpv built on
+  current ffmpeg, which since August 2026 refuses their `ICY 200 OK` reply.
+  A plain `http://` station that fails before starting is retried once
+  through a relay on `127.0.0.1` that rewrites that one line; pyode then
+  remembers to use it for that station.
+- The libmpv search no longer calls `os.uname()`, which Windows lacks.
+
 ## 0.5.0
 
 ### Added
