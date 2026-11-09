@@ -13,6 +13,10 @@
   `~/Music/pyode` (or `PYODE_RECORDINGS_DIR`), with a `.cue` track list of
   every title announced. Stopping or changing station ends it; a reconnect
   after a drop continues in a new file.
+- Windows media controls: pyode appears in the media flyout beside the
+  volume control, and the media keys play, pause, stop, and step through
+  stations, as on macOS and Linux. On Windows this adds a dependency on the
+  pywinrt `winrt-Windows.Media` bindings.
 
 ## 0.5.0
 
