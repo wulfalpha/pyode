@@ -37,6 +37,13 @@ TopBar #wordmark {
     width: 1fr;
 }
 
+TopBar #rec {
+    width: auto;
+    color: #D8734A;
+    text-style: bold;
+    margin-right: 2;
+}
+
 TopBar #sleep {
     width: auto;
     color: $dial;

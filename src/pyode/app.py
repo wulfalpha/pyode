@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from textual import events, work
@@ -28,7 +29,7 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import DataTable, Input, Label, Static
 
-from pyode import mediacontrols
+from pyode import mediacontrols, recorder
 from pyode.browser import RadioBrowser, RadioBrowserError
 from pyode.config import Preferences
 from pyode.history import TrackHistory
@@ -469,6 +470,8 @@ class PyodeApp(App[None]):
         self._sleep_minutes = sleep_minutes
         self._sleep: SleepTimer | None = None
         self._sleep_base: int | None = None
+        self._recording: recorder.Recording | None = None
+        self._cue_error = False
 
     # -- layout -----------------------------------------------------------
 
@@ -589,6 +592,7 @@ class PyodeApp(App[None]):
         self._media.pump()
         try:
             self._sleep_tick()
+            self._recording_tick()
         except NoMatches:
             return
         try:
@@ -630,6 +634,11 @@ class PyodeApp(App[None]):
         self._last_state = status.state
         if station is not None and status.now_playing.title:
             self._record(station.name, status.now_playing.title)
+        if self._recording is not None:
+            if status.state is PlayerState.ERROR and self._reconnect_timer is None:
+                self._finish_recording()  # dropped for good: nothing more is coming
+            elif self._recording.mark(status.now_playing.title, self._clock()):
+                self._write_cue()
         reconnecting = self._reconnect_timer is not None
         self.query_one(NowPlaying).update(status, station, self._notice)
         self._media.update(
@@ -879,8 +888,15 @@ class PyodeApp(App[None]):
                 self._reconnect_timer = None
             self._notice = ""
         self._playing_since = None
+        # A reconnect carries a recording on into a new file; anything the
+        # user starts ends it, since the player closes it with the stream.
+        carried = self._recording if not user else None
+        if carried is None:
+            self._finish_recording()
         self.player.play(station.url, station.name)
         self._playing = station
+        if carried is not None:
+            self._continue_recording(carried)
         # Starting a station always deserves a redraw.  Without this, retrying
         # a station that fails the same way twice produces an identical status
         # signature, and the second failure would pass unreported.
@@ -903,6 +919,7 @@ class PyodeApp(App[None]):
             self._preview_session = True
             self._resume_key = self._playing_key
         self._cancel_reconnect()
+        self._finish_recording()
         self._preview = station
         self._playing = None
         self._playing_since = None
@@ -962,6 +979,7 @@ class PyodeApp(App[None]):
 
     def action_stop(self) -> None:
         self._cancel_reconnect()
+        self._finish_recording()
         self.player.stop()
         self._playing = None
         self._playing_since = None
@@ -1017,6 +1035,66 @@ class PyodeApp(App[None]):
         else:
             here = self.query_one("#station-table", StationTable).cursor_row - delta
         self._start(self._visible[(here + delta) % len(self._visible)])
+
+    # -- recording ------------------------------------------------------------
+
+    def action_record(self) -> None:
+        if self._recording is not None:
+            self._finish_recording()
+            return
+        station = self._playing_station()
+        status = self.player.status
+        if station is None or status.state is not PlayerState.PLAYING:
+            self.notify("Recording starts once a station is playing.")
+            return
+        directory = recorder.default_dir()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.notify(f"Could not create {directory}: {exc}", severity="error")
+            return
+        extension = recorder.extension_for(status.now_playing.codec)
+        self._begin_recording(station.name, extension, directory)
+        self._recording.mark(status.now_playing.title, self._clock())
+        self._write_cue()
+        self.notify(f"Recording to {self._recording.path}")
+
+    def _begin_recording(self, station: str, extension: str, directory: Path) -> None:
+        self._recording = recorder.Recording.begin(
+            station, extension, self._clock(), directory=directory, when=datetime.now()
+        )
+        self._cue_error = False
+        self.player.record(str(self._recording.path))
+
+    def _continue_recording(self, previous: recorder.Recording) -> None:
+        """After a drop, carry on recording the same station into a new file."""
+        self._begin_recording(previous.station, previous.path.suffix, previous.path.parent)
+        self._write_cue()
+        self.notify(f"Stream reconnected; recording continues in {self._recording.path.name}")
+
+    def _finish_recording(self, *, report: bool = True) -> None:
+        recording, self._recording = self._recording, None
+        if recording is None:
+            return
+        self.player.record(None)
+        if report:
+            length = recording.label(self._clock())
+            self.notify(f"Saved {recording.path.name} ({length}).", title="Recording")
+
+    def _write_cue(self) -> None:
+        if self._recording is None:
+            return
+        try:
+            self._recording.write_cue()
+        except OSError as exc:
+            if not self._cue_error:  # once per recording, not per track
+                self._cue_error = True
+                self.notify(f"Could not write the track list: {exc}", severity="warning")
+
+    def _recording_tick(self) -> None:
+        recording = self._recording
+        label = recording.label(self._clock()) if recording is not None else ""
+        self.query_one(TopBar).set_recording(label)
 
     # -- sleep timer --------------------------------------------------------
 
@@ -1185,6 +1263,7 @@ class PyodeApp(App[None]):
             # Quitting right after a volume change must not lose it.  There is
             # no screen left to show an error on, so a failure is logged.
             self._save_preferences(report=False)
+        self._finish_recording(report=False)
         self._media.close()
         self.player.close()
         await self.api.close()

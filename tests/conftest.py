@@ -100,3 +100,11 @@ def media(monkeypatch):
 
     monkeypatch.setattr(pyode.mediacontrols, "create", create)
     return sessions
+
+
+@pytest.fixture(autouse=True)
+def recordings(tmp_path, monkeypatch):
+    """Recordings go to a temporary directory, never the developer's Music."""
+    path = tmp_path / "recordings"
+    monkeypatch.setenv("PYODE_RECORDINGS_DIR", str(path))
+    return path

@@ -35,24 +35,34 @@ TRANSPORT = {
 
 
 class TopBar(Horizontal):
-    """Wordmark, the sleep timer, and the on-air lamp."""
+    """Wordmark, recording and sleep timer readouts, and the on-air lamp."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._shown: dict[str, str] = {}
 
     def compose(self):
         yield Static("pyode", id="wordmark")
-        sleep = Static("", id="sleep")
-        sleep.display = False  # its margin would nudge the lamp while it is empty
-        yield sleep
+        for name in ("rec", "sleep"):
+            readout = Static("", id=name)
+            readout.display = False  # its margin would nudge the lamp while empty
+            yield readout
         yield Static("○ off air", id="lamp")
 
-    _sleep_label = ""
+    def _readout(self, name: str, text: str) -> None:
+        # Called on every tick, so redraw only when the text changes.
+        if self._shown.get(name, "") == text:
+            return
+        self._shown[name] = text
+        _set(self.query_one(f"#{name}", Static), text)
 
     def set_sleep(self, label: str) -> None:
-        """Time left on the sleep timer, or nothing when it is off.  Called on
-        every tick, so it redraws only when the text changes."""
-        if label == self._sleep_label:
-            return
-        self._sleep_label = label
-        _set(self.query_one("#sleep", Static), f"sleep {label}" if label else "")
+        """Time left on the sleep timer, or nothing when it is off."""
+        self._readout("sleep", f"sleep {label}" if label else "")
+
+    def set_recording(self, label: str) -> None:
+        """How long the recording has run, or nothing when not recording."""
+        self._readout("rec", f"● REC {label}" if label else "")
 
     def update(self, *, station_count: int, live: bool) -> None:
         stations = "station" if station_count == 1 else "stations"
