@@ -338,8 +338,8 @@ uv run pyode --silent --seconds 10 --play <stream-url>   # decode without an aud
 Build and check an installed release (requires network access for dependencies):
 
 ```bash
-uv build --out-dir dist/0.6.0-radio
-uv run python scripts/check_install.py dist/0.6.0-radio
+uv build --out-dir dist/0.7.0-radio
+uv run python scripts/check_install.py dist/0.7.0-radio
 ```
 
 See [the release procedure](docs/releasing.md) for PyPI setup and publishing.
